@@ -6,7 +6,7 @@
 
    VERSION is stamped by _build/stamp.sh, which must be run before every release, together with
    APP_VERSION in app.js. If it does not change, phones that already have the app will NOT get the update. */
-const VERSION = "2026.11.17-034805";
+const VERSION = "2026.11.17-034927";
 const CACHE = "fuel-" + VERSION;
 const SHELL = ["./", "index.html", "style.css", "app.js", "foods.js", "vendor.js", "manifest.webmanifest", "icon-180.png", "icon-512.png",
   "fonts/vt323-latin-400-normal.woff2", "fonts/vt323-latin-ext-400-normal.woff2",
