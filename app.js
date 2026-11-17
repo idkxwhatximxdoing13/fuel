@@ -1,7 +1,7 @@
 /* Fuel – personal calorie / weight app. All data stays on this device (IndexedDB). */
 "use strict";
 // Stamped by _build/stamp.sh before every release (same value as VERSION in sw.js) – do not edit by hand.
-const APP_VERSION = "2026.11.17-034927";
+const APP_VERSION = "2026.11.17-035811";
 
 // ---------- tiny helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -1130,6 +1130,7 @@ function applyBackup(d) {
 function goTab(name, opts = {}) {
   if (!$("#tab-" + name)) name = "today";
   const same = name === curTab; curTab = name;
+  if (!same) document.activeElement?.blur?.(); // a field on the tab being left must not keep the focus (and the keyboard)
   $$(".dock [data-tab]").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   $$(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + name));
   closeSheet(); renderAll();
@@ -1148,7 +1149,7 @@ function wire() {
   $("#dayStrip").onclick = (e) => { const b = e.target.closest("[data-day]"); if (b) { curDay = b.dataset.day; renderToday(); } };
   const pick = $("#dayPick");
   pick.onclick = () => { if (!matchMedia("(pointer: coarse)").matches) { try { pick.showPicker(); } catch {} } };
-  pick.onchange = () => { if (pick.value && pick.value <= dkey()) { curDay = pick.value; renderToday(); } else pick.value = curDay; };
+  pick.onchange = () => { if (pick.value && pick.value <= dkey()) { curDay = pick.value; renderToday(); } else pick.value = curDay; pick.blur(); };
   $("#backToday").onclick = () => { curDay = dkey(); renderToday(); };
   $("#hideInstall").onclick = async () => { S.meta.hideInstall = true; await save("meta"); renderInstallHint(); };
   $("#meals").onclick = (e) => {
@@ -1192,6 +1193,7 @@ function wire() {
   };
   $("#aiTest").onclick = async () => {
     const f = $("#aiForm").elements; S.ai.apiKey = f.apiKey.value.trim(); S.ai.model = f.model.value; await save("ai");
+    document.activeElement?.blur?.();
     if (!S.ai.apiKey) return toast("Paste your API key first");
     toast("Testing…", { ms: 20000 });
     try { const r = await askClaude([{ type: "text", text: "Reply with ok=true." }], { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } }); toast(r.ok ? "The key works" : "Unexpected answer"); }
@@ -1268,8 +1270,15 @@ function softReload() {
   } catch {}
   location.reload();
 }
+// Is something being typed that a restart would throw away? Only text fields that are actually on screen count:
+// a date picker or a drop-down that merely kept the focus (iOS often leaves it there) must not hold an update back.
+function typing() {
+  const el = document.activeElement;
+  if (!el || !el.getClientRects().length) return false;
+  return el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && /^(text|search|number|password|tel|email|url)$/.test(el.type));
+}
 function busy() {
-  if (sheet.open || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "")) return true;
+  if (sheet.open || typing()) return true;
   const t = $("#toast"); return !t.classList.contains("hidden") && !!$("button", t); // an Undo is still on offer
 }
 function applyUpdate() {
@@ -1297,7 +1306,7 @@ function setupSW() {
   UPD.lastCheck = Date.now(); // the browser checks by itself while the page loads
   navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((reg) => { swReg = reg; }).catch(() => {});
   navigator.serviceWorker.addEventListener("controllerchange", noteVersion);
-  document.addEventListener("pointerdown", () => { UPD.lastTouch = Date.now(); }, { passive: true, capture: true });
+  for (const ev of ["pointerdown", "touchmove", "scroll", "keydown"]) addEventListener(ev, () => { UPD.lastTouch = Date.now(); }, { passive: true, capture: true }); // "in use" = touched, scrolled or typed just now
   const back = () => { if (document.visibilityState === "visible") checkForUpdate().catch(() => {}); };
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") applyUpdate(); else back(); });
   for (const ev of ["pageshow", "focus", "online"]) addEventListener(ev, back);
