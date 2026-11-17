@@ -1,7 +1,7 @@
 /* Fuel – personal calorie / weight app. All data stays on this device (IndexedDB). */
 "use strict";
 // Stamped by _build/stamp.sh before every release (same value as VERSION in sw.js) – do not edit by hand.
-const APP_VERSION = "2026.11.17-155322";
+const APP_VERSION = "2026.11.17-155549";
 
 // ---------- tiny helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -1010,7 +1010,7 @@ function openOrder() {
   const body = openSheet(`${head(TITLE)}
     ${has ? "" : `<div class="note warn">This needs your Anthropic API key. <button type="button" class="link" data-goto="me">Add it in Me</button></div>`}
     <label class="filebtn primary wide"${off}>${I.image}Choose screenshots<input type="file" accept="image/*" multiple id="shots" hidden></label>
-    <textarea id="ordTxt" class="short" placeholder="Or type it: 2 shaorma mare, cartofi, Pepsi – Dristor"${has ? "" : " disabled"}${off}></textarea>
+    <textarea id="ordTxt" class="short" enterkeyhint="go" placeholder="Or type it: 2 shaorma mare, cartofi, Pepsi – Dristor"${has ? "" : " disabled"}${off}></textarea>
     <button type="button" class="tint wide hidden" id="ordGo">Estimate</button>`);
   const txt$ = $("#ordTxt", body), go = $("#ordGo", body);
 
@@ -1070,6 +1070,7 @@ function openOrder() {
   };
 
   txt$.oninput = () => go.classList.toggle("hidden", !txt$.value.trim());
+  txt$.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); go.click(); } }; // the keyboard can cover the button, so Return sends it too
   go.onclick = () => { const t = txt$.value.trim(); if (!t) return; txt$.blur(); thumbs = ""; content = [{ type: "text", text: ORDER_PROMPT(t, 0) }]; ask(); };
   $("#shots", body).onchange = async (e) => {
     const picked = [...e.target.files], files = picked.slice(0, 6), extra = txt$.value.trim(); e.target.value = "";
