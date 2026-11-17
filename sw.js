@@ -1,6 +1,6 @@
 /* Fuel offline cache. App files: network first (so updates arrive), cache as fallback (so it opens offline).
    Never touches other sites (Open Food Facts, Anthropic). */
-const CACHE = "fuel-v3";
+const CACHE = "fuel-v4";
 const SHELL = ["./", "index.html", "style.css", "app.js", "foods.js", "vendor.js", "manifest.webmanifest", "icon-180.png", "icon-512.png",
   "fonts/vt323-latin-400-normal.woff2", "fonts/jetbrains-mono-latin-400-normal.woff2", "fonts/jetbrains-mono-latin-700-normal.woff2"];
 

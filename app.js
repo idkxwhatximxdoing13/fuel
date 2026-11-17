@@ -13,7 +13,7 @@ const dkey = (d = new Date()) => { const z = new Date(d); return `${z.getFullYea
 const parseDkey = (k) => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); };
 const addDays = (k, n) => { const d = parseDkey(k); d.setDate(d.getDate() + n); return dkey(d); };
 const daysBetween = (a, b) => Math.round((parseDkey(b) - parseDkey(a)) / 86400000);
-const fold = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase(); // "brânză" → "branza"
+const fold = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); // "brânză" → "branza"
 const shortDate = (k) => parseDkey(k).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 const plural = (lbl, n) => (n === 1 || /\)$/.test(lbl) ? lbl : lbl + "s");
 const unitOf = (basis) => (basis === "ml" ? "ml" : "g");
@@ -726,9 +726,9 @@ function openSearch() {
       for (const h of history()) { const f = findFood(h.last.ref); if (f && !seen.has(f.barcode || f.id)) { seen.add(f.barcode || f.id); mine.push(f); } }
       const favFirst = [...mine.filter((f) => S.favs[f.barcode || f.id]), ...mine.filter((f) => !S.favs[f.barcode || f.id])].slice(0, 15);
       const rest = [...Object.values(S.myfoods), ...Object.values(S.products)].filter((f) => !seen.has(f.barcode || f.id));
-      html = (favFirst.length ? `<li class="sec">Recent</li>${favFirst.map(row).join("")}` : "")
-        + (rest.length ? `<li class="sec">My foods & scans</li>${rest.map(row).join("")}` : "")
-        + `<li class="sec">Basic foods</li>${builtinFoods().map(row).join("")}`;
+      html = (favFirst.length ? `<li class="secrow">Recent</li>${favFirst.map(row).join("")}` : "")
+        + (rest.length ? `<li class="secrow">My foods &amp; scans</li>${rest.map(row).join("")}` : "")
+        + `<li class="secrow">Basic foods</li>${builtinFoods().map(row).join("")}`;
     }
     $("#results", body).innerHTML = html;
   };
@@ -950,6 +950,9 @@ function wire() {
     } catch (err) { toast("Import failed: " + err.message); }
     e.target.value = "";
   };
+
+  // No pinch zoom either (Safari's own gesture events); double-tap zoom is switched off in the CSS
+  for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
 
   // App reopened on a new day: jump to the new today
   document.addEventListener("visibilitychange", () => {
