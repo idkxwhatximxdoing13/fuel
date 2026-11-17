@@ -1,7 +1,7 @@
 /* Fuel – personal calorie / weight app. All data stays on this device (IndexedDB). */
 "use strict";
 // Stamped by _build/stamp.sh before every release (same value as VERSION in sw.js) – do not edit by hand.
-const APP_VERSION = "2026.11.17-155549";
+const APP_VERSION = "2026.11.17-165607";
 
 // ---------- tiny helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -46,6 +46,8 @@ const I = {
   camera: svg('<path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1.4-2h6.2l1.4 2h2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="13" r="3.4"/>'),
   meal: svg('<path d="M7 4h10a1 1 0 0 1 1 1v15l-6-3.5L6 20V5a1 1 0 0 1 1-1z"/>'),
   check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
+  pot: svg('<path d="M4 10h16v6.5a3.5 3.5 0 0 1-3.5 3.5h-9A3.5 3.5 0 0 1 4 16.5z"/><path d="M2.5 10h19M9 6.5c0-1 .8-1.5.8-2.5M14 6.5c0-1 .8-1.5.8-2.5"/>'),
+  globe: svg('<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.3 2.4 3.4 5.2 3.4 8.5s-1.1 6.1-3.4 8.5c-2.3-2.4-3.4-5.2-3.4-8.5s1.1-6.1 3.4-8.5z"/>'),
   bag: svg('<path d="M6.5 8.5h11l1 10.9a1 1 0 0 1-1 1.1h-11a1 1 0 0 1-1-1.1z"/><path d="M9 11.5V7a3 3 0 0 1 6 0v4.5"/>'),
   image: svg('<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="8.6" cy="9.8" r="1.5"/><path d="M4.5 17l4.6-4.6 3.2 3.2 2.6-2.6 4.6 4.6"/>'),
 };
@@ -168,15 +170,33 @@ function saveProduct(prod) {
   S.myfoods[prod.id] = prod; return save("myfoods");
 }
 
+const OFF_FIELDS = "product_name,product_name_ro,product_name_en,brands,quantity,product_quantity,product_quantity_unit,serving_size,serving_quantity,nutriments";
 async function lookupOFF(code) {
-  const url = `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=product_name,product_name_ro,product_name_en,brands,quantity,product_quantity,product_quantity_unit,serving_size,serving_quantity,nutriments`;
+  const url = `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=${OFF_FIELDS}`;
   let r;
   try { r = await fetch(url); } catch { const e = new Error("offline"); e.offline = true; throw e; }
   if (r.status === 404) return null;
   if (!r.ok) throw new Error("Food database error " + r.status);
   const j = await r.json();
   if (j.status !== 1 || !j.product) return null;
-  const P = j.product, n = P.nutriments || {};
+  return offProduct(j.product, code);
+}
+// search Open Food Facts by name. Their search is often busy (it then answers without the header browsers need, which looks like
+// a failed connection), so it tries up to three times before giving up.
+async function searchOFF(q) {
+  const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=24&fields=code,${OFF_FIELDS}`;
+  let r = null;
+  for (let i = 0; i < 3 && !r?.ok; i++) {
+    if (i) await new Promise((ok) => setTimeout(ok, 1500 * i));
+    try { r = await fetch(url); } catch { r = null; }
+  }
+  if (!r?.ok) throw new Error(navigator.onLine === false ? "No connection." : "The food database is busy.");
+  const j = await r.json();
+  const list = (j.products || []).filter((P) => P.code && (P.product_name || P.product_name_ro || P.product_name_en)).map((P) => offProduct(P, String(P.code)));
+  return list.sort((a, b) => complete(b) - complete(a)); // the ones with full nutrition first
+}
+function offProduct(P, code) {
+  const n = P.nutriments || {};
   let kcal = num(n["energy-kcal_100g"]);
   if (kcal === null && num(n["energy-kj_100g"]) !== null) kcal = num(n["energy-kj_100g"]) / 4.184;
   const unit = (P.product_quantity_unit || "").toLowerCase();
@@ -668,6 +688,48 @@ function openNameSheet(title, value, onSave) {
   inp.focus(); try { inp.setSelectionRange(0, 99); } catch {}
 }
 
+// ---------- food search (shared by Add and the recipe's ingredient picker) ----------
+function searchFoods(raw) {
+  const q = fold(raw), words = q.split(/\s+/).filter(Boolean);
+  const startsWord = (n, w) => n.startsWith(w) || n.includes(" " + w) || n.includes("(" + w);
+  const found = allFoods().filter(complete).map((f) => ({ f, n: fold(f.name + " " + (f.brand || "")) })).filter((x) => words.every((w) => x.n.includes(w)));
+  const rank = (x) => (x.n.startsWith(q) ? 0 : words.every((w) => startsWord(x.n, w)) ? 1 : 2);
+  return found.sort((a, b) => rank(a) - rank(b)).map((x) => x.f);
+}
+function foodRow(f) {
+  const k = f.barcode || f.id, pg = pieceG(f), U = unitOf(f.basis);
+  const kind = f.recipe ? "Recipe" : f.brand || (f.source === "usda" ? "Basic food" : f.barcode ? "Scanned" : "My food");
+  return `<li class="tap" data-food="${esc(k)}"><div class="name">${S.favs[k] ? '<span class="star">★</span> ' : ""}${esc(f.name)}<small>${esc(kind)}${pg ? ` · 1 ${esc(f.pieceLabel || "piece")} = ${r0(pg)} ${U}` : ""}</small></div><div class="kcal">${r0(f.per100.kcal)}<small>/100${U}</small></div></li>`;
+}
+// "Search online" under the local results: one tap, then Open Food Facts products appear below
+function onlineBox() {
+  const o = { q: "", st: "", items: [], gen: 0 };
+  const row = (p, i) => `<li class="tap" data-off="${i}"><div class="name">${esc(p.name)}<small>${esc([p.brand, p.quantityText].filter(Boolean).join(" · ") || "Open Food Facts")}${complete(p) ? "" : " · no nutrition info"}</small></div><div class="kcal">${p.per100.kcal === null ? "–" : r0(p.per100.kcal)}<small>/100${unitOf(p.basis)}</small></div></li>`;
+  return {
+    html(raw) {
+      if (o.q !== raw) return `<li class="tap act" data-online>${I.globe}Search online for “${esc(raw)}”</li>`;
+      if (o.st === "busy") return `<li class="empty"><span class="spinner"></span>Searching online</li>`;
+      if (o.st) return `<li class="tap act" data-online>${I.globe}${esc(o.st)} Try again</li>`;
+      return o.items.length ? `<li class="secrow">Online · Open Food Facts</li>${o.items.map(row).join("")}` : `<li class="empty">Nothing found online either.</li>`;
+    },
+    async run(raw, redraw) {
+      const gen = ++o.gen, sg = sheetGen; o.q = raw; o.st = "busy"; o.items = []; redraw();
+      try { const items = await searchOFF(raw); if (gen !== o.gen || sg !== sheetGen) return; o.items = items; o.st = ""; }
+      catch (e) { if (gen !== o.gen || sg !== sheetGen) return; o.st = e.message; }
+      redraw();
+    },
+    item: (i) => o.items[i],
+  };
+}
+// a product picked from the online results: kept like a scanned one, so it is there next time without the internet
+async function pickOnline(prod, next) {
+  if (!prod) return;
+  const mine = S.products[prod.barcode];
+  if (mine && complete(mine)) return next(mine, false);
+  if (complete(prod)) { await saveProduct(prod); return next(prod, true); }
+  openProductForm(prod, { reason: "Found it, but its nutrition info is incomplete.", afterSave: (p) => next(p, false) });
+}
+
 // ---------- Add: one sheet for every way of logging ----------
 function openAdd(meal) {
   addMeal = meal && MEAL_NAME[meal] ? meal : null;
@@ -680,25 +742,20 @@ function openAdd(meal) {
       <button type="button" data-act="quick">${I.bolt}<span>Quick add</span></button>
     </div>
     <ul class="list" id="addList"></ul>`, { tall: true });
-  const q$ = $("#q", body), list = $("#addList", body), H = history();
+  const q$ = $("#q", body), list = $("#addList", body), H = history(), online = onlineBox();
   let browse = false;
   const addNow = `<button type="button" class="ib add" data-quick aria-label="Add now">${I.plus}</button>`;
   const starred = (k) => (S.favs[k] ? '<span class="star">★</span> ' : "");
   const hRow = (x) => `<li class="tap" data-h="${esc(x.key)}"><div class="name">${starred(x.key)}${esc(x.last.name)}<small>${esc(x.last.amountText || "")}</small></div><div class="kcal">${r0(x.last.kcal)}</div>${addNow}</li>`;
   const mRow = (m) => `<li class="tap" data-qm="${esc(m.id)}"><div class="name">${esc(m.name)}<small>${nItems(m.items.length)}</small></div><div class="kcal">${r0(sum4(m.items).kcal)}</div>${addNow}</li>`;
-  const fRow = (f) => { const k = f.barcode || f.id, pg = pieceG(f), U = unitOf(f.basis); return `<li class="tap" data-food="${esc(k)}"><div class="name">${starred(k)}${esc(f.name)}<small>${esc(f.brand || (f.source === "usda" ? "Basic food" : f.barcode ? "Scanned" : "My food"))}${pg ? ` · 1 ${esc(f.pieceLabel || "piece")} = ${r0(pg)} ${U}` : ""}</small></div><div class="kcal">${r0(f.per100.kcal)}<small>/100${U}</small></div></li>`; };
+  const fRow = foodRow;
   const draw = () => {
-    const raw = q$.value.trim(), q = fold(raw);
+    const raw = q$.value.trim();
     $("#qClr", body).classList.toggle("hidden", !raw);
     $("#tiles", body).classList.toggle("hidden", !!raw || browse);
     let html = "";
     if (raw) {
-      const words = q.split(/\s+/).filter(Boolean);
-      const startsWord = (n, w) => n.startsWith(w) || n.includes(" " + w) || n.includes("(" + w);
-      const found = allFoods().filter(complete).map((f) => ({ f, n: fold(f.name + " " + (f.brand || "")) })).filter((x) => words.every((w) => x.n.includes(w)));
-      const rank = (x) => (x.n.startsWith(q) ? 0 : words.every((w) => startsWord(x.n, w)) ? 1 : 2);
-      found.sort((a, b) => rank(a) - rank(b));
-      html = found.slice(0, 60).map((x) => fRow(x.f)).join("") + `<li class="tap act" data-new>${I.plus}Create “${esc(raw)}”</li>`;
+      html = searchFoods(raw).slice(0, 60).map(fRow).join("") + online.html(raw) + `<li class="tap act" data-new>${I.plus}Create “${esc(raw)}”</li>`;
     } else if (browse) {
       const mine = [...Object.values(S.myfoods), ...Object.values(S.products)].filter(complete);
       html = `<li class="tap act" data-unbrowse>${I.chev}Back</li>` + (mine.length ? `<li class="secrow">My foods and scans</li>${mine.map(fRow).join("")}` : "") + `<li class="secrow">Basic foods</li>${builtinFoods().map(fRow).join("")}`;
@@ -710,7 +767,7 @@ function openAdd(meal) {
       if (favs.length) html += `<li class="secrow">Favourites</li>${favs.map(hRow).join("")}`;
       if (recent.length) html += `<li class="secrow">Recent</li>${recent.map(hRow).join("")}`;
       if (!html) html = `<li class="secrow">Basic foods</li>${builtinFoods().slice(0, 12).map(fRow).join("")}`; // nothing eaten yet: show something to pick from
-      html += `<li class="tap act" data-browse>${I.search}Browse all foods</li>`;
+      html += `<li class="tap act" data-browse>${I.search}Browse all foods</li><li class="tap act" data-recipe>${I.pot}New recipe</li>`;
     }
     list.innerHTML = html;
   };
@@ -724,6 +781,10 @@ function openAdd(meal) {
     if (t.closest("[data-browse]")) { browse = true; draw(); sheetBody.scrollTop = 0; return; }
     if (t.closest("[data-unbrowse]")) { browse = false; draw(); sheetBody.scrollTop = 0; return; }
     if (t.closest("[data-new]")) return openProductForm({ id: "my:" + uid(), basis: "g", per100: {}, source: "manual", name: q$.value.trim() });
+    if (t.closest("[data-recipe]")) return openRecipe();
+    if (t.closest("[data-online]")) { q$.blur(); return online.run(q$.value.trim(), draw); }
+    const off = t.closest("[data-off]");
+    if (off) return pickOnline(online.item(+off.dataset.off), (p, fresh) => openPortion(p, { fresh }));
     const quick = !!t.closest("[data-quick]");
     if (t.closest("[data-yday]")) {
       const pv = (S.log[addDays(curDay, -1)] || []).filter((x) => x.meal === addMeal);
@@ -882,14 +943,15 @@ function openPortion(prod, opts = {}) {
   const units = [["g", U, 1]];
   if (pg) units.push(["piece", prod.pieceLabel || "piece", pg]);
   if (prod.servingG) units.push(["serving", "serving", prod.servingG]);
-  if (prod.packG) units.push(["pack", "whole pack", prod.packG]);
+  if (prod.packG) units.push(["pack", prod.recipe ? "whole recipe" : "whole pack", prod.packG]);
   const key = prod.barcode || prod.id;
   let unit = pg ? "piece" : "g", start = pg ? 1 : 100, meal = opts.meal || defaultMeal();
   if (opts.unit) { // opened from history: start from the amount used last time
     if (units.some((u) => u[0] === opts.unit) && opts.amount > 0) { unit = opts.unit; start = opts.amount; }
     else if (opts.grams > 0) { unit = "g"; start = r0(opts.grams); }
   }
-  const src = prod.source === "usda" ? "USDA" : String(prod.source || "").startsWith("openfoodfacts") ? "Open Food Facts" : "";
+  const src = prod.recipe ? "Recipe" : prod.source === "usda" ? "USDA" : String(prod.source || "").startsWith("openfoodfacts") ? "Open Food Facts" : "";
+  const pick = opts.pick; // set when choosing an ingredient for a recipe: the button hands the amount back instead of logging it
   const body = openSheet(`${head(prod.name, { star: !!S.favs[key] })}
     <div class="meta">${prod.brand ? esc(prod.brand) + " · " : ""}${r0(prod.per100.kcal)} kcal per 100 ${U}${src ? " · " + src : ""}</div>
     ${opts.fresh ? `<div class="note">Found it, and saved it for next time.</div>` : ""}
@@ -898,11 +960,11 @@ function openPortion(prod, opts = {}) {
     <div class="chips center" id="unitChips"></div>
     <div class="chips center" id="fastAmts"></div>
     <div class="preview" id="pv"></div>
-    ${mealSeg(meal)}
-    <button class="primary wide" id="addBtn">Add to ${dayLabel()}</button>
-    <div class="btnrow">
-      ${prod.packG && !pg ? `<button type="button" class="quietbtn" id="setPieces">Set pieces per pack</button>` : ""}
-      ${prod.source !== "usda" ? `<button type="button" class="quietbtn" id="editProd">Edit food</button>` : `<button type="button" class="quietbtn" id="copyProd">Make my own version</button>`}
+    ${pick ? "" : mealSeg(meal)}
+    <button class="primary wide" id="addBtn">${pick ? "Add to recipe" : `Add to ${dayLabel()}`}</button>
+    <div class="btnrow">${pick ? `<button type="button" class="quietbtn" id="pickBack">Back to recipe</button>` : `
+      ${prod.packG && !pg && !prod.recipe ? `<button type="button" class="quietbtn" id="setPieces">Set pieces per pack</button>` : ""}
+      ${prod.source !== "usda" ? `<button type="button" class="quietbtn" id="editProd">${prod.recipe ? "Edit recipe" : "Edit food"}</button>` : `<button type="button" class="quietbtn" id="copyProd">Make my own version</button>`}`}
     </div>`);
   const amt = $("#amt", body);
   const calc = () => {
@@ -923,19 +985,111 @@ function openPortion(prod, opts = {}) {
     const s = e.target.closest("[data-star]"); if (s) toggleFav(key, s);
   };
   amt.oninput = draw; selectOnFocus(amt);
-  wireMealSeg(body, (m) => (meal = m));
+  if (!pick) wireMealSeg(body, (m) => (meal = m));
   const addBtn = $("#addBtn", body);
   addBtn.onclick = guard(addBtn, async () => {
     const c = calc(); if (!(c.grams > 0)) return toast("Enter an amount");
     const amountText = unit === "g" ? `${r0(c.grams)} ${U}` : `${c.q} ${plural(c.u[1], c.q)} · ${r0(c.grams)} ${U}`;
+    if (pick) return pick({ ref: key, name: prod.name, grams: c.grams, basis: prod.basis, amountText, kcal: c.kcal, p: c.p, c: c.c, f: c.f });
     closeSheet();
     await addEntries([{ ref: key, name: prod.name, grams: c.grams, unit, unitG: c.u[2], qty: c.q, unitLabel: c.u[1], basis: prod.basis, amountText, kcal: c.kcal, p: c.p, c: c.c, f: c.f, meal }]);
   });
   const sp = $("#setPieces", body); if (sp) sp.onclick = () => openPiecesForm(prod, meal);
-  const ed = $("#editProd", body); if (ed) ed.onclick = () => openProductForm(prod);
+  const ed = $("#editProd", body); if (ed) ed.onclick = () => (prod.recipe ? openRecipe(prod) : openProductForm(prod));
+  const pb = $("#pickBack", body); if (pb) pb.onclick = opts.back;
   const cp = $("#copyProd", body); if (cp) cp.onclick = () => openProductForm({ ...prod, id: "my:" + uid(), source: "manual", name: prod.name + " (mine)" });
   draw();
 }
+// ---------- Recipes: a dish cooked at home, built from its ingredients, then logged by portion or by weight ----------
+// Saved as one of "my foods" (values per 100 g of the cooked dish), with the ingredients kept so it can be changed later.
+function openRecipe(src) {
+  const d = src?.items ? src
+    : src?.recipe ? { id: src.id, name: src.name, items: src.recipe.items.map((x) => ({ ...x })), cookedG: src.recipe.cookedG, portions: src.recipe.portions }
+    : { id: null, name: "", items: [], cookedG: null, portions: null };
+  const raw = sum4(d.items), rawG = d.items.reduce((s, i) => s + (i.grams || 0), 0), known = !!(d.id && S.myfoods[d.id]);
+  const body = openSheet(`${head(known ? "Edit recipe" : "New recipe")}
+    <form id="rcForm" class="form" novalidate>
+      <label>Name <input name="name" value="${esc(d.name)}" autocomplete="off" placeholder="Chicken curry"></label>
+      <ul class="list">${d.items.length ? `<li class="secrow">Ingredients</li>` : ""}${d.items.map((i, k) => `<li><div class="name">${esc(i.name)}<small>${esc(i.amountText || r0(i.grams) + " g")}</small></div><div class="kcal">${r0(i.kcal)}</div><button type="button" class="ib quiet" data-rm="${k}" aria-label="Remove ${esc(i.name)}">${I.x}</button></li>`).join("")}
+        <li class="tap act" data-ing>${I.plus}Add ingredient</li></ul>
+      <div class="grid2" style="margin-top:14px">
+        <label>Cooked weight g <input name="cooked" inputmode="decimal" autocomplete="off" value="${d.cookedG ?? ""}" placeholder="${rawG ? r0(rawG) : "1200"}"></label>
+        <label>Portions <input name="portions" inputmode="decimal" autocomplete="off" value="${d.portions ?? ""}" placeholder="4"></label>
+      </div>
+      <div class="preview" id="rcPv"></div>
+      <div class="unitlbl" id="rcPer"></div>
+      <div class="btnrow"><button class="primary" type="submit">Save recipe</button>${known ? `<button type="button" class="danger" id="rcDel">Delete</button>` : ""}</div>
+    </form>`);
+  const f = $("#rcForm", body);
+  const sync = () => { d.name = f.elements.name.value; d.cookedG = num(f.elements.cooked.value); d.portions = num(f.elements.portions.value); };
+  const size = () => ({ w: d.cookedG > 0 ? d.cookedG : rawG, n: d.portions > 0 ? d.portions : 0 }); // no cooked weight given: the raw weights added up
+  const draw = () => {
+    sync(); const { w, n } = size();
+    $("#rcPv", body).innerHTML = four(n ? { kcal: raw.kcal / n, p: raw.p / n, c: raw.c / n, f: raw.f / n } : raw, r0);
+    $("#rcPer", body).textContent = !d.items.length ? "" : `${n ? `1 portion · ${r0(w / n)} g` : `whole recipe · ${r0(w)} g`}${w ? ` · ${r0((raw.kcal * 100) / w)} kcal/100 g` : ""}`;
+  };
+  f.oninput = draw;
+  body.onclick = (e) => {
+    const rm = e.target.closest("[data-rm]"); if (rm) { sync(); d.items.splice(+rm.dataset.rm, 1); return openRecipe(d); }
+    if (e.target.closest("[data-ing]")) { sync(); return openIngredientPick(d); }
+  };
+  f.onsubmit = guard(f.querySelector("[type=submit]"), async (e) => {
+    e.preventDefault(); sync();
+    const name = d.name.trim(), { w, n } = size();
+    if (!name) return toast("Give the recipe a name");
+    if (!d.items.length) return toast("Add at least one ingredient");
+    if (!(w > 0)) return toast("Enter the cooked weight");
+    const per = (x) => r1((x * 100) / w);
+    const food = { ...(S.myfoods[d.id] || {}), id: d.id || "my:" + uid(), name, brand: "", basis: "g", source: "recipe",
+      per100: { kcal: per(raw.kcal), p: per(raw.p), c: per(raw.c), f: per(raw.f) },
+      packG: r1(w), pieceG: n ? r1(w / n) : null, pieceLabel: n ? "portion" : null, piecesPerPack: null, servingG: null,
+      recipe: { items: d.items, cookedG: d.cookedG > 0 ? d.cookedG : null, portions: n || null } };
+    await saveProduct(food); toast("Recipe saved"); openPortion(food);
+  });
+  const del = $("#rcDel", body);
+  if (del) del.onclick = async () => {
+    const old = S.myfoods[d.id]; delete S.myfoods[d.id]; await save("myfoods"); closeSheet();
+    toast(`Deleted ${old.name}`, { action: "Undo", onAction: async () => { S.myfoods[old.id] = old; await save("myfoods"); toast("Restored"); } });
+  };
+  draw();
+}
+// choose an ingredient: search your foods (or online), pick it, say how much → back to the recipe
+function openIngredientPick(d) {
+  const body = openSheet(`${head("Add ingredient")}
+    <div class="searchbox">${I.search}<input id="iq" type="search" placeholder="Search foods" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"></div>
+    <ul class="list" id="iList"></ul>`, { tall: true });
+  const q$ = $("#iq", body), list = $("#iList", body), online = onlineBox();
+  const back = () => openRecipe(d);
+  const pick = (food) => openPortion(food, { pick: (it) => { d.items.push(it); back(); }, back });
+  const draw = () => {
+    const raw = q$.value.trim();
+    let html = `<li class="tap act" data-back>${I.chev}Back to recipe</li>`;
+    if (raw) html += searchFoods(raw).slice(0, 60).map(foodRow).join("") + online.html(raw);
+    else {
+      const seen = new Set(), recent = [];
+      for (const x of history()) {
+        const food = findFood(x.last.ref);
+        if (food && complete(food) && !food.recipe && !seen.has(food.id)) { seen.add(food.id); recent.push(food); }
+        if (recent.length >= 10) break;
+      }
+      if (recent.length) html += `<li class="secrow">Recent</li>${recent.map(foodRow).join("")}`;
+      html += `<li class="secrow">Basic foods</li>${builtinFoods().slice(0, 12).map(foodRow).join("")}`;
+    }
+    list.innerHTML = html;
+  };
+  q$.oninput = draw;
+  q$.onkeydown = (e) => { if (e.key === "Enter") q$.blur(); };
+  list.ontouchmove = () => { if (document.activeElement === q$) q$.blur(); };
+  body.onclick = (e) => {
+    const t = e.target;
+    if (t.closest("[data-back]")) return back();
+    if (t.closest("[data-online]")) { q$.blur(); return online.run(q$.value.trim(), draw); }
+    const off = t.closest("[data-off]"); if (off) return pickOnline(online.item(+off.dataset.off), pick);
+    const fd = t.closest("[data-food]"); if (fd) { const food = findFood(fd.dataset.food); if (food) pick(food); }
+  };
+  draw();
+}
+
 // "one tortilla out of a pack of 8"
 function openPiecesForm(prod, meal) {
   const body = openSheet(`${head("Pieces per pack")}
