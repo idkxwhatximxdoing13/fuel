@@ -232,7 +232,7 @@ async function fileToImageBlock(file) {
 let curDay = dkey(), lastToday = dkey();
 const MEALS = [["breakfast", "Breakfast"], ["lunch", "Lunch"], ["dinner", "Dinner"], ["snacks", "Snacks"]];
 const MEAL_NAME = Object.fromEntries(MEALS);
-function defaultMeal() { const h = new Date().getHours(); return h < 11 ? "breakfast" : h < 16 ? "lunch" : h < 21 ? "dinner" : "snacks"; }
+function defaultMeal() { if (addMeal) return addMeal; const h = new Date().getHours(); return h < 11 ? "breakfast" : h < 16 ? "lunch" : h < 21 ? "dinner" : "snacks"; }
 const entryKey = (e) => e.ref || "n:" + fold(e.name);
 const dayLabel = () => (curDay === dkey() ? "today" : shortDate(curDay));
 
@@ -263,76 +263,127 @@ function history() {
 }
 const cleanEntry = (e) => { const { id, ts, ...rest } = e; return rest; };
 
-// ---------- rendering: header pill ----------
+// ---------- rendering: streak chip ----------
 function renderPill() {
   const st = streak(), today = isLogged(dkey());
-  $("#led").className = "led" + (today ? "" : " warn");
-  $("#pillTxt").textContent = st ? `STREAK ${st}D` : today ? "LOGGED" : "NOT LOGGED";
+  $("#streak").classList.toggle("on", today);
+  $("#streakTxt").textContent = st ? `${st} DAY${st === 1 ? "" : "S"}` : "DAY 0";
 }
 
 // ---------- rendering: Today ----------
 function setBar(el, val, max) { const pct = max ? Math.min(100, (val / max) * 100) : 0; el.style.width = pct + "%"; el.classList.toggle("over", !!max && val > max * 1.03); }
 
+// instrument-style ring: 270° arc with tick marks, amber fill, red past target
+function ringSVG(frac, over) {
+  const R = 100, C = 120, start = 135, sweep = 270;
+  const pt = (deg, r) => { const a = (deg * Math.PI) / 180; return [C + r * Math.cos(a), C + r * Math.sin(a)]; };
+  const arc = (from, to, r) => { const [x1, y1] = pt(from, r), [x2, y2] = pt(to, r); return `M${x1.toFixed(2)},${y1.toFixed(2)} A${r},${r} 0 ${to - from > 180 ? 1 : 0} 1 ${x2.toFixed(2)},${y2.toFixed(2)}`; };
+  const f = Math.max(0, Math.min(1, frac)), end = start + sweep * Math.max(f, 0.0001);
+  let ticks = "";
+  for (let i = 0; i <= 54; i++) { const d = start + (sweep * i) / 54, big = i % 9 === 0; const [x1, y1] = pt(d, 116), [x2, y2] = pt(d, big ? 109 : 112); ticks += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${(i / 54) <= f ? "rgba(255,201,120,.75)" : "rgba(255,214,170,.14)"}" stroke-width="${big ? 2 : 1.2}" stroke-linecap="round"/>`; }
+  const col = over ? "#ff6b4f" : "url(#rg)";
+  const [hx, hy] = pt(end, R);
+  return `<svg viewBox="0 0 240 240"><defs><linearGradient id="rg" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#e88a1f"/><stop offset="1" stop-color="#ffd08a"/></linearGradient>
+      <filter id="gl" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="5"/></filter></defs>
+    ${ticks}
+    <path d="${arc(start, start + sweep, R)}" fill="none" stroke="rgba(255,214,170,.07)" stroke-width="14" stroke-linecap="round"/>
+    ${f > 0 ? `<path d="${arc(start, end, R)}" fill="none" stroke="${col}" stroke-width="14" stroke-linecap="round" opacity=".55" filter="url(#gl)"/>
+    <path d="${arc(start, end, R)}" fill="none" stroke="${col}" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="4" fill="#fff7ea"/>` : ""}</svg>`;
+}
+
 function renderToday() {
   const today = dkey();
-  $("#dayTitle").textContent = curDay === today ? "Today" : curDay === addDays(today, -1) ? "Yesterday" : parseDkey(curDay).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-  $("#dayNext").disabled = curDay >= today;
+  $("#dayTitle").textContent = curDay === today ? "Today" : curDay === addDays(today, -1) ? "Yesterday" : parseDkey(curDay).toLocaleDateString(undefined, { weekday: "long" });
+  $("#daySub").textContent = parseDkey(curDay).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
   const T = targets(), t = dayTotals(curDay);
-  // week strip: the 7 days ending today (or the picked day if older)
+  // the 7 days ending today (or around the picked day if older)
   const end = curDay > addDays(today, -7) ? today : addDays(curDay, 3) > today ? today : addDays(curDay, 3);
   $("#weekStrip").innerHTML = Array.from({ length: 7 }, (_, i) => addDays(end, i - 6)).map((k) => {
     const d = parseDkey(k);
     return `<button data-day="${k}" class="${dayStatus(k, T)}${k === curDay ? " cur" : ""}${k === today ? " today" : ""}">${d.toLocaleDateString(undefined, { weekday: "narrow" })}<b>${d.getDate()}</b><i></i></button>`;
   }).join("");
   $("#setupHint").classList.toggle("hidden", !!T);
-  const big = $("#kcalLeft");
-  if (T) {
-    const left = T.kcal - t.kcal;
-    big.textContent = r0(Math.abs(left)); big.classList.toggle("over", left < 0);
-    $("#kcalLeftLabel").textContent = left >= 0 ? "kcal left" : "kcal over";
-    $("#kcalEaten").innerHTML = `<span class="lbl">eaten</span><br>${r0(t.kcal)}<br><span class="lbl">target</span><br>${T.kcal}`;
-  } else { big.textContent = r0(t.kcal); big.classList.remove("over"); $("#kcalLeftLabel").textContent = "kcal eaten"; $("#kcalEaten").textContent = ""; }
-  setBar($("#kcalBar"), t.kcal, T?.kcal);
-  const m = (v, tg) => `${r0(v)}${tg ? `<small> /${tg}g</small>` : "<small>g</small>"}`;
+  const left = T ? T.kcal - t.kcal : 0, over = !!T && left < 0;
+  $("#ring").innerHTML = ringSVG(T ? t.kcal / T.kcal : 0, over) +
+    `<div class="mid"><div class="num${over ? " over" : ""}">${T ? r0(Math.abs(left)) : r0(t.kcal)}</div><div class="lbl unit">${T ? (over ? "kcal over" : "kcal left") : "kcal eaten"}</div></div>`;
+  $("#pair").innerHTML = T ? `<div><span class="lbl">Eaten</span><b>${r0(t.kcal)}</b></div><div><span class="lbl">Target</span><b>${T.kcal}</b></div>` : "";
+  const m = (v, tg) => `${r0(v)}<small>${tg ? ` / ${tg}g` : "g"}</small>`;
   $("#mP").innerHTML = m(t.p, T?.prot); setBar($("#bP"), t.p, T?.prot);
   $("#mC").innerHTML = m(t.c, T?.carbs); setBar($("#bC"), t.c, T?.carbs);
   $("#mF").innerHTML = m(t.f, T?.fat); setBar($("#bF"), t.f, T?.fat);
-  renderQuick();
   const entries = S.log[curDay] || [], prev = S.log[addDays(curDay, -1)] || [];
   let html = "";
-  if (!entries.length && prev.length) html += `<button class="wide" id="copyDay" style="margin-bottom:12px">⧉ Same as ${curDay === today ? "yesterday" : "day before"} · ${prev.length} items · ${r0(prev.reduce((s, e) => s + e.kcal, 0))} kcal</button>`;
-  html += MEALS.map(([k, label]) => {
-    const es = entries.filter((e) => e.meal === k), pv = prev.filter((e) => e.meal === k);
-    const sum = es.reduce((s, e) => s + e.kcal, 0);
-    const acts = [];
-    if (!es.length && pv.length && entries.length) acts.push(`<button data-copymeal="${k}">⧉ Yesterday's ${label.toLowerCase()} · ${r0(pv.reduce((s, e) => s + e.kcal, 0))}</button>`);
-    if (es.length >= 2) acts.push(`<button data-savemeal="${k}">▣ Save as meal</button>`);
-    return `<div class="card meal"><div class="ph"><h3>${label}</h3><small>${es.length ? `<b class="amber">${r0(sum)}</b> kcal` : ""}</small></div>
-      ${es.length ? `<ul class="list">${es.map((e) => `<li class="tap" data-entry="${e.id}"><div class="name">${S.favs[entryKey(e)] ? '<span class="amber">★</span> ' : ""}${esc(e.name)}<small>${esc(e.amountText || r0(e.grams) + " g")} · P${r0(e.p)} C${r0(e.c)} F${r0(e.f)}</small></div><div class="kcal">${r0(e.kcal)}</div></li>`).join("")}</ul>` : `<div class="empty">— empty —</div>`}
-      ${acts.length ? `<div class="acts">${acts.join("")}</div>` : ""}</div>`;
-  }).join("");
+  if (!entries.length && prev.length) html += `<button class="copyday" id="copyDay">Repeat ${curDay === today ? "yesterday" : "the day before"} · ${prev.length} items · ${r0(prev.reduce((s, e) => s + e.kcal, 0))} kcal</button>`;
+  html += `<div class="card meal">` + MEALS.map(([k, label]) => {
+    const es = entries.filter((e) => e.meal === k), sum = es.reduce((s, e) => s + e.kcal, 0);
+    return `<div class="mhead"><span class="t">${label}</span><span class="k${es.length ? " has" : ""}">${es.length ? r0(sum) : "—"}</span>
+        <button class="more" data-mealmenu="${k}" aria-label="${label} options">•••</button><button data-addto="${k}" aria-label="Add to ${label}">+</button></div>
+      ${es.length ? `<ul class="list" style="margin-bottom:6px">${es.map((e) => `<li class="tap" data-entry="${e.id}"><div class="name">${S.favs[entryKey(e)] ? '<span class="star">★</span> ' : ""}${esc(e.name)}<small>${esc(e.amountText || r0(e.grams) + " g")}</small></div><div class="kcal">${r0(e.kcal)}</div></li>`).join("")}</ul>` : ""}`;
+  }).join(`<div style="border-top:1px solid var(--edge)"></div>`) + `</div>`;
   $("#meals").innerHTML = html;
   renderWater();
   renderPill();
 }
-
-function renderQuick() {
-  const h = history();
-  const favs = h.filter((x) => S.favs[x.key]);
-  const meals = Object.values(S.meals);
-  const recent = h.filter((x) => !S.favs[x.key]).slice(0, 10);
-  const chip = (x) => `<button data-q="${esc(x.key)}">${S.favs[x.key] ? '<span><span class="star">★</span> ' : "<span>"}${esc(x.last.name)}</span><small>${esc(x.last.amountText || "")} · ${r0(x.last.kcal)}</small></button>`;
-  const mchip = (m) => `<button data-qm="${m.id}"><span><span class="star">▣</span> ${esc(m.name)}</span><small>${m.items.length} items · ${r0(m.items.reduce((s, e) => s + e.kcal, 0))}</small></button>`;
-  const html = [...meals.map(mchip), ...favs.map(chip), ...recent.map(chip)].join("");
-  $("#quickStrip").innerHTML = html;
-  $("#quickStrip").classList.toggle("hidden", !html);
-}
+function renderQuick() {} // quick items now live in the Add sheet
 
 function renderWater() {
-  const ml = S.water[curDay] || 0, goal = S.profile.waterGoal || 2500, cups = Math.max(1, Math.round(goal / 250));
-  $("#waterCard").innerHTML = `<div class="ph"><h3>Water</h3><small><b class="${ml >= goal ? "ok" : "amber"}">${r1(ml / 1000)}</b> / ${r1(goal / 1000)} L</small></div>
-    <div class="cups">${Array.from({ length: cups }, (_, i) => `<i class="${i < Math.round(ml / 250) ? "on" : ""}"></i>`).join("")}</div>
-    <div class="btnrow"><button data-water="-250">−</button><button data-water="250" class="primary">+ glass</button><button data-water="500">+ 0.5 L</button></div>`;
+  const ml = S.water[curDay] || 0, goal = S.profile.waterGoal || 2500;
+  $("#waterCard").innerHTML = `<div class="drop"><svg width="18" height="22" viewBox="0 0 18 22"><path d="M9 1.5C6 6 2 9.6 2 13.6A7 7 0 0 0 16 13.6C16 9.6 12 6 9 1.5Z" fill="#6cc4ff" opacity=".9"/></svg></div>
+    <div class="info"><span class="lbl">Water</span><br><b>${r1(ml / 1000)}<small> / ${r1(goal / 1000)} L</small></b><div class="bar"><div style="width:${Math.min(100, (ml / goal) * 100)}%"></div></div></div>
+    <button data-water="-250" aria-label="Remove a glass">−</button><button class="add" data-water="250" aria-label="Add a glass">+</button>`;
+}
+
+// ---------- Add sheet: one place for every way to log ----------
+let addMeal = null; // meal picked from a meal's "+" (used by defaultMeal while adding)
+const ICONS = {
+  scan: '<svg viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M8 8v8M11 8v8M14 8v8M16.5 8v8"/></svg>',
+  search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>',
+  describe: '<svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>',
+  quick: '<svg viewBox="0 0 24 24"><path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/></svg>',
+};
+function openAdd(meal) {
+  addMeal = meal || null;
+  const h = history(), meals = Object.values(S.meals);
+  const favs = h.filter((x) => S.favs[x.key]), recent = h.filter((x) => !S.favs[x.key]).slice(0, 8);
+  const row = (x) => `<li class="tap" data-q="${esc(x.key)}"><div class="name">${S.favs[x.key] ? '<span class="star">★</span> ' : ""}${esc(x.last.name)}<small>${esc(x.last.amountText || "")}</small></div><div class="kcal">${r0(x.last.kcal)}</div><button class="ghost" aria-label="Add">＋</button></li>`;
+  const mrow = (m) => `<li class="tap" data-qm="${m.id}"><div class="name"><span class="star">▣</span> ${esc(m.name)}<small>${m.items.length} items</small></div><div class="kcal">${r0(m.items.reduce((s, e) => s + e.kcal, 0))}</div><button class="ghost" aria-label="Open">›</button></li>`;
+  const body = openSheet(`${head(meal ? `Add to ${MEAL_NAME[meal].toLowerCase()}` : "Add food")}
+    <div class="tiles">
+      <button class="primary" data-act="scan">${ICONS.scan}Scan</button>
+      <button data-act="search">${ICONS.search}Search</button>
+      <button data-act="describe">${ICONS.describe}AI</button>
+      <button data-act="quick">${ICONS.quick}Quick</button>
+    </div>
+    <ul class="list">
+      ${meals.length ? `<li class="secrow">Saved meals</li>${meals.map(mrow).join("")}` : ""}
+      ${favs.length ? `<li class="secrow">Favourites</li>${favs.map(row).join("")}` : ""}
+      ${recent.length ? `<li class="secrow">Recent · tap to add again</li>${recent.map(row).join("")}` : ""}
+    </ul>`);
+  body.onclick = async (e) => {
+    const a = e.target.closest("[data-act]")?.dataset.act;
+    if (a) return ({ scan: openScanner, search: openSearch, describe: openDescribe, quick: openQuick })[a]();
+    const qm = e.target.closest("[data-qm]"); if (qm) return openSavedMeal(S.meals[qm.dataset.qm]);
+    const q = e.target.closest("[data-q]"); if (!q) return;
+    const x = h.find((y) => y.key === q.dataset.q); if (!x) return;
+    const m = addMeal || (curDay === dkey() ? defaultMeal() : x.last.meal);
+    closeSheet();
+    await addEntries([{ ...cleanEntry(x.last), meal: m }], `Added ${x.last.name}`);
+  };
+}
+
+function openMealMenu(k) {
+  const label = MEAL_NAME[k], es = (S.log[curDay] || []).filter((x) => x.meal === k), pv = (S.log[addDays(curDay, -1)] || []).filter((x) => x.meal === k);
+  const body = openSheet(`${head(label)}
+    <div class="btnrow" style="flex-direction:column">
+      <button id="mmCopy" ${pv.length ? "" : "disabled"}>Copy yesterday's ${label.toLowerCase()}${pv.length ? ` · ${r0(pv.reduce((s, e) => s + e.kcal, 0))} kcal` : ""}</button>
+      <button id="mmSave" ${es.length ? "" : "disabled"}>Save as a one-tap meal</button>
+    </div>`);
+  $("#mmCopy", body).onclick = async () => { closeSheet(); await addEntries(pv.map(cleanEntry), `Copied ${pv.length} item${pv.length === 1 ? "" : "s"}`); };
+  $("#mmSave", body).onclick = async () => {
+    const name = prompt("Name this meal", `My ${label.toLowerCase()}`); if (!name) return;
+    const id = uid(); S.meals[id] = { id, name: name.trim(), items: es.map(cleanEntry) }; await save("meals"); closeSheet(); toast(`Saved “${name.trim()}”`);
+  };
 }
 
 // ---------- rendering: Progress ----------
@@ -344,28 +395,29 @@ function renderWeight() {
   const tw = trendWeight(), goal = S.profile.goalKg, slope = weightSlope();
   let head = "";
   if (tw) {
-    const first = w[0];
-    const ch = r1(tw - first.kg);
-    head = `<div class="wbig"><div class="big">${r1(tw)}<small class="lbl"> kg</small></div><div class="sub">7-day average<br>${w.length > 1 ? `${ch > 0 ? "+" : ""}${ch} kg since ${shortDate(first.date)}` : "first weigh-in"}${slope !== null ? `<br>${slope * 7 > 0 ? "+" : ""}${r1(slope * 7)} kg / week lately` : ""}</div></div>`;
+    const first = w[0], ch = r1(tw - first.kg);
+    const wk = slope !== null ? r1(slope * 7) : null;
+    head = `<div class="sec"><h3>Current · 7-day average</h3>${wk !== null ? `<span class="delta ${wk < 0 ? "down" : wk > 0 ? "up" : ""}">${wk > 0 ? "▲ +" : wk < 0 ? "▼ " : ""}${wk} kg/wk</span>` : ""}</div>
+      <div class="whero"><div class="num">${r1(tw)}<small>KG</small></div><div class="muted small" style="text-align:right">${w.length > 1 ? `${ch > 0 ? "+" : ""}${ch} kg<br>since ${shortDate(first.date)}` : "First weigh-in"}</div></div>`;
     if (goal) {
       const start = first.kg, done = start === goal ? 1 : Math.max(0, Math.min(1, (start - tw) / (start - goal)));
       const left = r1(Math.abs(tw - goal));
       let eta = "";
       if (left < 0.3) eta = "Goal reached ✓";
       else if (slope && Math.sign(goal - tw) === Math.sign(slope) && Math.abs(slope) > 0.005) {
-        const days = (goal - tw) / slope, d = new Date(); d.setDate(d.getDate() + days);
-        eta = `At this pace: ${d.toLocaleDateString(undefined, { month: "short", year: "numeric" })}`;
-      } else if (slope !== null) eta = "Not moving towards the goal lately";
-      head += `<div class="prog"><i style="width:${r0(done * 100)}%"></i></div><div class="small muted" style="font-family:var(--mono);font-size:11.5px">${left} kg to ${goal} kg${eta ? " · " + eta : ""}</div>`;
+        const d = new Date(); d.setDate(d.getDate() + (goal - tw) / slope);
+        eta = `ETA ${d.toLocaleDateString(undefined, { month: "short", year: "numeric" })}`;
+      } else if (slope !== null) eta = "Off course lately";
+      head += `<div class="goal"><div class="bar"><div style="width:${r0(done * 100)}%"></div></div><div class="gl"><span>${left} kg to go · goal ${goal}</span><span>${eta}</span></div></div>`;
     }
-  } else head = `<div class="empty">No weigh-ins yet.</div>`;
+  } else head = `<h3>Current</h3><div class="empty">Log your first weigh-in below.</div>`;
   $("#wHead").innerHTML = head;
 
   $("#wList").innerHTML = w.length ? [...w].reverse().map((x) => `<li><div class="name">${parseDkey(x.date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</div><div class="kcal">${x.kg}</div><button class="danger" data-delw="${x.date}" aria-label="Delete">✕</button></li>`).join("") : `<li class="empty">No weigh-ins yet</li>`;
 
   // chart: raw dots dim, 7-day trend line bright, dashed goal line
   if (w.length >= 2) {
-    const W = 520, H = 190, padL = 40, padR = 12, padY = 22;
+    const W = 520, H = 220, padL = 52, padR = 14, padY = 28;
     const t0 = parseDkey(w[0].date), t1 = parseDkey(w[w.length - 1].date), span = Math.max(1, (t1 - t0) / 86400000);
     const ys = w.map((p) => p.kg); if (goal && Math.abs(goal - ys[ys.length - 1]) < 15) ys.push(goal);
     const lo = Math.floor(Math.min(...ys) - 0.5), hi = Math.ceil(Math.max(...ys) + 0.5);
@@ -373,25 +425,29 @@ function renderWeight() {
     const Y = (kg) => H - padY - ((kg - lo) / (hi - lo)) * (H - padY * 2);
     const trend = w.map((p) => { const near = w.filter((q) => q.date <= p.date && daysBetween(q.date, p.date) <= 6); return { date: p.date, kg: near.reduce((s, q) => s + q.kg, 0) / near.length }; });
     const line = trend.map((p, i) => `${i ? "L" : "M"}${X(p.date).toFixed(1)},${Y(p.kg).toFixed(1)}`).join(" ");
-    const grid = [lo, (lo + hi) / 2, hi].map((v) => `<line x1="${padL}" x2="${W - padR}" y1="${Y(v)}" y2="${Y(v)}" stroke="rgba(240,160,60,.12)"/><text x="2" y="${Y(v) + 4}">${r1(v)}</text>`).join("");
-    $("#wChart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Weight chart">${grid}
-      ${goal && goal >= lo && goal <= hi ? `<line x1="${padL}" x2="${W - padR}" y1="${Y(goal)}" y2="${Y(goal)}" stroke="#a6e37a" stroke-dasharray="5 5"/><text x="${W - padR}" y="${Y(goal) - 4}" text-anchor="end" style="fill:#a6e37a">GOAL</text>` : ""}
-      ${w.map((p) => `<rect x="${X(p.date) - 2.5}" y="${Y(p.kg) - 2.5}" width="5" height="5" fill="#8a7a62"/>`).join("")}
-      <path d="${line}" fill="none" stroke="#f2a33a" stroke-width="2.5" stroke-linejoin="round" style="filter:drop-shadow(0 0 4px rgba(242,163,58,.6))"/>
+    const area = `${line} L${X(trend[trend.length - 1].date).toFixed(1)},${H - padY} L${X(trend[0].date).toFixed(1)},${H - padY} Z`;
+    const grid = [lo, (lo + hi) / 2, hi].map((v) => `<line x1="${padL}" x2="${W - padR}" y1="${Y(v)}" y2="${Y(v)}" stroke="rgba(255,214,170,.06)"/><text x="2" y="${Y(v) + 4}">${r1(v)}</text>`).join("");
+    const lastT = trend[trend.length - 1];
+    $("#wChart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Weight chart">
+      <defs><linearGradient id="wa" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f5a83c" stop-opacity=".28"/><stop offset="1" stop-color="#f5a83c" stop-opacity="0"/></linearGradient></defs>${grid}
+      ${goal && goal >= lo && goal <= hi ? `<line x1="${padL}" x2="${W - padR}" y1="${Y(goal)}" y2="${Y(goal)}" stroke="#9fe07a" stroke-opacity=".7" stroke-dasharray="4 6"/><text x="${W - padR}" y="${Y(goal) - 6}" text-anchor="end" style="fill:#9fe07a">GOAL ${goal}</text>` : ""}
+      <path d="${area}" fill="url(#wa)"/>
+      ${w.map((p) => `<circle cx="${X(p.date)}" cy="${Y(p.kg)}" r="2.6" fill="#6f6457"/>`).join("")}
+      <path d="${line}" fill="none" stroke="#f5a83c" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" style="filter:drop-shadow(0 0 6px rgba(245,168,60,.55))"/>
+      <circle cx="${X(lastT.date)}" cy="${Y(lastT.kg)}" r="5" fill="#fff3e0" stroke="#f5a83c" stroke-width="3"/>
       <text x="${padL}" y="${H - 4}">${shortDate(w[0].date)}</text><text x="${W - padR}" y="${H - 4}" text-anchor="end">${shortDate(w[w.length - 1].date)}</text></svg>`;
-    $("#wLegend").innerHTML = `<span class="amber">━</span> trend · <span style="color:var(--faint)">■</span> weigh-ins`;
-  } else { $("#wChart").innerHTML = `<div class="empty">Chart appears after 2 weigh-ins.</div>`; $("#wLegend").textContent = ""; }
-  $("#wStats").innerHTML = "";
+    $("#wLegend").innerHTML = `<span class="amber">●</span> trend  <span style="color:var(--faint)">●</span> weigh-ins`;
+  } else { $("#wChart").innerHTML = `<div class="empty">The chart appears after 2 weigh-ins.</div>`; $("#wLegend").textContent = ""; }
 
   renderWeekCard(T);
   renderMedals();
 
   const A = adaptiveEstimate();
-  let html = `<h3>Real burn check</h3>`;
+  let html = `<h3>Real burn</h3>`;
   if (!A.ok) html += `<div class="empty">${esc(A.why)}</div>`;
   else {
-    html += `<div class="big3"><div><span class="lbl">ate / day</span><strong>${A.avgIn}</strong></div><div><span class="lbl">kg / week</span><strong>${A.perWeek > 0 ? "+" : ""}${A.perWeek}</strong></div><div><span class="lbl">real burn</span><strong>${A.est}</strong></div></div>
-      <p class="small muted" style="font-family:var(--mono);font-size:11.5px">Formula guessed ${T ? T.formulaTdee : "—"} kcal.</p>`;
+    html += `<div class="stats3" style="margin-top:0"><div><span class="lbl">Ate/day</span><strong>${A.avgIn}</strong></div><div><span class="lbl">Kg/week</span><strong>${A.perWeek > 0 ? "+" : ""}${A.perWeek}</strong></div><div><span class="lbl">Burn</span><strong style="color:var(--hi)">${A.est}</strong></div></div>
+      <p class="muted small" style="margin:10px 0 0">The formula guessed ${T ? T.formulaTdee : "—"} kcal.</p>`;
     if (T) html += `<div class="btnrow"><button class="primary" id="useAdaptive">Use ${A.est}</button>${S.profile.tdeeOverride ? `<button id="clearAdaptive">Back to formula</button>` : ""}</div>`;
   }
   $("#adaptCard").innerHTML = html;
@@ -402,10 +458,10 @@ function renderWeekCard(T) {
   const tot = days.map(dayTotals), logged = tot.filter((t) => t.kcal > LOGGED);
   const max = Math.max(T?.kcal || 0, ...tot.map((t) => t.kcal), 1) * 1.08;
   const avg = (f) => (logged.length ? r0(logged.reduce((s, t) => s + t[f], 0) / logged.length) : "—");
-  $("#weekCard").innerHTML = `<div class="ph"><h3>Last 7 days</h3><small>${logged.length}/7 logged</small></div>
-    <div class="weekbars">${T ? `<div class="tgt" style="bottom:${(T.kcal / max) * 100}%"></div>` : ""}${days.map((k, i) => `<div class="c ${dayStatus(k, T) === "over" ? "over" : ""} ${k === today ? "today" : ""}" data-day="${k}"><i style="height:${(tot[i].kcal / max) * 100}%"></i></div>`).join("")}</div>
+  $("#weekCard").innerHTML = `<div class="sec"><h3>Last 7 days</h3><small>${logged.length}/7 logged</small></div>
+    <div class="weekbars">${T ? `<div class="tgt" style="bottom:${(T.kcal / max) * 100}%"></div>` : ""}${days.map((k, i) => `<div class="c ${dayStatus(k, T) === "over" ? "over" : tot[i].kcal > 0 ? "logged" : ""} ${k === today ? "today" : ""}" data-day="${k}"><i style="height:${(tot[i].kcal / max) * 100}%"></i></div>`).join("")}</div>
     <div class="axis7">${days.map((k) => `<span>${parseDkey(k).toLocaleDateString(undefined, { weekday: "narrow" })}</span>`).join("")}</div>
-    <div class="big3"><div><span class="lbl">avg kcal</span><strong>${avg("kcal")}</strong></div><div><span class="lbl">avg protein</span><strong>${avg("p")}${logged.length ? "<small class='lbl'>g</small>" : ""}</strong></div><div><span class="lbl">on target</span><strong>${days.filter((k) => dayStatus(k, T) === "hit").length}<small class="lbl">/7</small></strong></div></div>`;
+    <div class="stats3"><div><span class="lbl">Avg kcal</span><strong>${avg("kcal")}</strong></div><div><span class="lbl">Protein</span><strong>${avg("p")}${logged.length ? "<small>g</small>" : ""}</strong></div><div><span class="lbl">On target</span><strong>${days.filter((k) => dayStatus(k, T) === "hit").length}<small>/7</small></strong></div></div>`;
 }
 
 function medals() {
@@ -415,15 +471,15 @@ function medals() {
   const protDays = T ? days.filter((k) => dayTotals(k).p >= T.prot * 0.95).length : 0;
   const scans = Object.keys(S.products).length;
   return [
-    ["FIRST LOG", allEntries.length > 0], ["3-DAY STREAK", st >= 3], ["WEEK STREAK", st >= 7], ["30-DAY STREAK", st >= 30], ["100 DAYS", st >= 100],
-    ["FIRST SCAN", scans >= 1], ["25 PRODUCTS", scans >= 25], ["PROTEIN ×10", protDays >= 10], ["10 WEIGH-INS", w.length >= 10],
-    ["−1 KG", lost >= 1], ["−5 KG", lost >= 5], ["−10 KG", lost >= 10], ["GOAL HIT", !!S.profile.goalKg && w.length > 1 && Math.abs((trendWeight() || 0) - S.profile.goalKg) < 0.3],
+    ["First log", allEntries.length > 0, "1"], ["3-day streak", st >= 3, "3"], ["Week streak", st >= 7, "7"], ["30 days", st >= 30, "30"],
+    ["First scan", scans >= 1, "▦"], ["25 products", scans >= 25, "25"], ["Protein ×10", protDays >= 10, "P"], ["10 weigh-ins", w.length >= 10, "10"],
+    ["−1 kg", lost >= 1, "1"], ["−5 kg", lost >= 5, "5"], ["−10 kg", lost >= 10, "10"], ["Goal hit", !!S.profile.goalKg && w.length > 1 && Math.abs((trendWeight() || 0) - S.profile.goalKg) < 0.3, "★"],
   ];
 }
 function renderMedals() {
   const m = medals(), got = m.filter((x) => x[1]).length;
-  $("#medalCard").innerHTML = `<div class="ph"><h3>Medals</h3><small>${got}/${m.length} · best streak ${bestStreak()}d</small></div>
-    <div class="medals">${m.map(([n, ok]) => `<span class="medal ${ok ? "got" : ""}">${ok ? "◆" : "◇"} ${n}</span>`).join("")}</div>`;
+  $("#medalCard").innerHTML = `<div class="sec"><h3>Medals</h3><small>${got}/${m.length} · best streak ${bestStreak()}</small></div>
+    <div class="medals">${m.map(([n, ok, g]) => `<div class="medal ${ok ? "got" : ""}"><i>${ok ? g : ""}</i>${n}</div>`).join("")}</div>`;
 }
 
 // ---------- rendering: Me ----------
@@ -432,8 +488,8 @@ function renderMe() {
   for (const k of ["sex", "birthYear", "height", "activity", "goal", "kcalOverride", "goalKg", "waterGoal"]) if (p[k] !== undefined && p[k] !== null) f.elements[k].value = p[k];
   const a = $("#aiForm"); a.elements.apiKey.value = S.ai.apiKey || ""; a.elements.model.value = S.ai.model || "claude-opus-5-5";
   const T = targets();
-  $("#targetsCard").innerHTML = T ? `<div class="ph"><h3>Daily targets</h3><small>${GOALS[T.goal]}${T.auto ? " · suggested" : ""}</small></div>
-    <div class="preview"><div><b>${T.kcal}</b><span>kcal</span></div><div><b>${T.prot}</b><span>protein</span></div><div><b>${T.carbs}</b><span>carbs</span></div><div><b>${T.fat}</b><span>fat</span></div></div>
+  $("#targetsCard").innerHTML = T ? `<div class="sec"><h3>Daily targets</h3><small>${GOALS[T.goal]}${T.auto ? " · auto" : ""}</small></div>
+    <div class="tgt4"><div><b>${T.kcal}</b><span>kcal</span></div><div><b>${T.prot}</b><span>protein</span></div><div><b>${T.carbs}</b><span>carbs</span></div><div><b>${T.fat}</b><span>fat</span></div></div>
     <details><summary>How it's worked out</summary><p class="muted small">Weight ${r1(T.kg)} kg (7-day average), age ${T.age}, BMI ${T.bmi}${T.auto ? ` (${T.suggested === "lose" ? "25+ → lose fat first" : T.suggested === "gain" ? "under 20 → build muscle" : "20–25 → recomp"})` : ""}. Resting burn ${T.bmr} kcal × activity = ${T.formulaTdee} kcal/day${S.profile.tdeeOverride ? `; using your measured burn ${S.profile.tdeeOverride}` : ""}. Lose fat −20%, recomp −10%, build muscle +10%. Protein 1.8 g/kg${T.kg > 25 * (S.profile.height / 100) ** 2 ? " of your weight at BMI 25" : ""}, fat 25% of calories, carbs the rest. Not medical advice.</p></details>`
     : `<h3>Daily targets</h3><div class="empty">Fill in the profile and add a weigh-in.</div>`;
   if (navigator.storage?.persisted) navigator.storage.persisted().then((ok) => { $("#storageInfo").textContent = ok ? "Storage protected ✓" : "Open from the Home Screen icon so iOS keeps your data."; });
@@ -454,7 +510,7 @@ function openSheet(html, onClose) {
   sheet.scrollTop = 0;
   return body;
 }
-function closeSheet() { if (sheetCleanup) { try { sheetCleanup(); } catch {} sheetCleanup = null; } if (sheet.open) sheet.close(); }
+function closeSheet() { addMeal = null; if (sheetCleanup) { try { sheetCleanup(); } catch {} sheetCleanup = null; } if (sheet.open) sheet.close(); }
 sheet.addEventListener("click", (e) => { if (e.target === sheet) closeSheet(); if (e.target.closest("[data-close]")) closeSheet(); });
 sheet.addEventListener("cancel", (e) => { e.preventDefault(); closeSheet(); });
 const head = (title) => `<div class="sheethead"><h2>${esc(title)}</h2><button class="icon" data-close aria-label="Close">×</button></div>`;
@@ -515,7 +571,7 @@ function openProductForm(prod, opts = {}) {
   const v = (x) => (x === null || x === undefined ? "" : x);
   const body = openSheet(`${head(prod.barcode ? "Product " + prod.barcode : prod.name || "My food")}
     ${opts.reason ? `<div class="note${opts.retry ? " warn" : ""}">${esc(opts.reason)}${opts.retry ? ` <button class="link" id="retry">Try again</button>` : ""}</div>` : ""}
-    ${S.ai.apiKey ? `<label class="filebtn wide primary" style="margin-bottom:6px;background:var(--accent);color:var(--accent-text)">📷 Read the label with AI<input type="file" accept="image/*" multiple id="labelPhotos" hidden></label>
+    ${S.ai.apiKey ? `<label class="filebtn wide primary" style="margin-bottom:6px">📷 Read the label with AI<input type="file" accept="image/*" multiple id="labelPhotos" hidden></label>
     <p class="lbl" id="aiMsg" style="margin:4px 0 8px">Nutrition table + front of pack</p>` : ""}
     <form id="prodForm" class="form">
       <label>Name <input name="name" value="${esc(v(prod.name))}" required></label>
@@ -592,10 +648,10 @@ function openPortion(prod, opts = {}) {
   let unit = pg ? "piece" : "g", meal = opts.meal || defaultMeal();
   const key = prod.barcode || prod.id;
   const body = openSheet(`${head(prod.name)}
-    <div class="lbl" style="text-transform:none">${esc(prod.brand || "")}${prod.brand ? " · " : ""}per 100 ${U}: ${r0(prod.per100.kcal)} kcal · P${r1(prod.per100.p)} C${r1(prod.per100.c)} F${r1(prod.per100.f)}${prod.source === "usda" ? " · USDA" : ""}${prod.source === "openfoodfacts" ? " · Open Food Facts" : ""}</div>
+    <div class="meta">${esc(prod.brand || "")}${prod.brand ? " · " : ""}per 100 ${U}: ${r0(prod.per100.kcal)} kcal · P${r1(prod.per100.p)} C${r1(prod.per100.c)} F${r1(prod.per100.f)}${prod.source === "usda" ? " · USDA" : ""}${prod.source === "openfoodfacts" ? " · Open Food Facts" : ""}</div>
     ${opts.fresh ? `<div class="note">New product saved. Numbers look off? Edit it below.</div>` : ""}
     <div class="chips" id="unitChips"></div>
-    ${prod.packG && !pg ? `<button class="link" id="setPieces">Comes in pieces? Set pieces per pack</button>` : ""}
+    ${prod.packG && !pg ? `<button class="link" id="setPieces" style="font-size:13px;margin:0 0 8px">Comes in pieces? Set how many per pack</button>` : ""}
     <div class="stepper"><button type="button" data-step="-1">−</button><input id="amt" type="text" inputmode="decimal"><button type="button" data-step="1">+</button></div>
     <div class="unitlbl" id="unitLbl"></div>
     <div class="chips" id="fastAmts"></div>
@@ -615,7 +671,7 @@ function openPortion(prod, opts = {}) {
   };
   const draw = () => {
     $("#unitChips", body).innerHTML = units.map(([k, l, g]) => `<button data-unit="${k}" class="${k === unit ? "on" : ""}">${esc(l)}${k !== "g" ? ` · ${r0(g)}${U}` : ""}</button>`).join("");
-    const fast = unit === "g" ? [50, 100, 150, 200, 250] : [0.5, 1, 2, 3];
+    const fast = unit === "g" ? [50, 100, 150, 200] : [0.5, 1, 2, 3];
     $("#fastAmts", body).innerHTML = fast.map((n) => `<button data-amt="${n}" class="${num(amt.value) === n ? "on" : ""}">${n}${unit === "g" ? U : "×"}</button>`).join("");
     const c = calc();
     $("#unitLbl", body).textContent = (unit === "g" ? U : plural(c.u[1], num(amt.value))) + (unit !== "g" ? ` · ${r0(c.grams)} ${U}` : "");
@@ -818,35 +874,20 @@ function openSavedMeal(m) {
 function goTab(name) {
   $$(".tabbar button").forEach((x) => x.classList.toggle("active", x.dataset.tab === name));
   $$(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + name));
+  $("#fab").classList.toggle("show", name === "today");
   closeSheet(); renderAll(); window.scrollTo(0, 0);
 }
 function wire() {
   $$(".tabbar button").forEach((b) => (b.onclick = () => goTab(b.dataset.tab)));
   document.addEventListener("click", (e) => { const g = e.target.closest("[data-goto]"); if (g) goTab(g.dataset.goto); });
-  $("#dayPrev").onclick = () => { curDay = addDays(curDay, -1); renderToday(); };
-  $("#dayNext").onclick = () => { if (curDay < dkey()) { curDay = addDays(curDay, 1); renderToday(); } };
-  $("#dayTitle").onclick = () => { if (curDay !== dkey()) { curDay = dkey(); renderToday(); } };
   $("#weekStrip").onclick = (e) => { const b = e.target.closest("[data-day]"); if (b) { curDay = b.dataset.day; renderToday(); } };
   $("#weekCard").onclick = (e) => { const b = e.target.closest("[data-day]"); if (b) { curDay = b.dataset.day; goTab("today"); } };
-  $(".addrow").onclick = (e) => { const a = e.target.closest("[data-act]")?.dataset.act; ({ scan: openScanner, search: openSearch, describe: openDescribe, quick: openQuick })[a]?.(); };
-  $("#quickStrip").onclick = async (e) => {
-    const qm = e.target.closest("[data-qm]"); if (qm) return openSavedMeal(S.meals[qm.dataset.qm]);
-    const q = e.target.closest("[data-q]"); if (!q || q.disabled) return;
-    const h = history().find((x) => x.key === q.dataset.q); if (!h) return;
-    q.disabled = true;
-    await addEntries([{ ...cleanEntry(h.last), meal: curDay === dkey() ? defaultMeal() : h.last.meal }], `Added ${h.last.name} · ${r0(h.last.kcal)} kcal`);
-  };
+  $("#fab").onclick = () => openAdd();
   $("#meals").onclick = async (e) => {
     const li = e.target.closest("[data-entry]"); if (li) return openEntry(li.dataset.entry);
+    const ad = e.target.closest("[data-addto]"); if (ad) return openAdd(ad.dataset.addto);
+    const mm = e.target.closest("[data-mealmenu]"); if (mm) return openMealMenu(mm.dataset.mealmenu);
     if (e.target.closest("#copyDay")) { const prev = S.log[addDays(curDay, -1)] || []; return addEntries(prev.map(cleanEntry), `Copied ${prev.length} items`); }
-    const cm = e.target.closest("[data-copymeal]");
-    if (cm) { const prev = (S.log[addDays(curDay, -1)] || []).filter((x) => x.meal === cm.dataset.copymeal); return addEntries(prev.map(cleanEntry)); }
-    const sm = e.target.closest("[data-savemeal]");
-    if (sm) {
-      const es = (S.log[curDay] || []).filter((x) => x.meal === sm.dataset.savemeal);
-      const name = prompt("Name this meal", `My ${MEAL_NAME[sm.dataset.savemeal].toLowerCase()}`); if (!name) return;
-      const id = uid(); S.meals[id] = { id, name: name.trim(), items: es.map(cleanEntry) }; await save("meals"); renderQuick(); toast(`Saved ▣ ${name.trim()}`);
-    }
   };
   $("#waterCard").onclick = async (e) => {
     const b = e.target.closest("[data-water]"); if (!b) return;
