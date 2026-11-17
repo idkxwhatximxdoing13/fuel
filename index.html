@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Fuel</title>
-<meta name="theme-color" content="#0f1115">
+<meta name="theme-color" content="#0a0806">
+<meta name="color-scheme" content="dark">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -12,9 +13,17 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-180.png">
+<link rel="preload" href="fonts/vt323-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<header class="topbar"><div class="in">
+  <svg class="mark" viewBox="0 0 120 34" aria-label="Fuel">
+    <text x="2" y="28" font-family="VT323, monospace" font-size="36" font-style="italic" letter-spacing="3" fill="rgba(242,163,58,.08)" stroke="#f2a33a" stroke-width="1.1" textLength="104" lengthAdjust="spacingAndGlyphs" transform="skewX(-12)">FUEL</text>
+  </svg>
+  <div class="pill" id="pill"><span class="led warn" id="led"></span><span id="pillTxt">BOOTING</span></div>
+</div></header>
+
 <main id="app">
   <!-- TODAY -->
   <section id="tab-today" class="tab active">
@@ -23,13 +32,14 @@
       <h1 id="dayTitle">Today</h1>
       <button class="icon" id="dayNext" aria-label="Next day">›</button>
     </header>
+    <div class="week" id="weekStrip"></div>
     <div class="card summary">
       <div class="kcalrow">
         <div>
           <div class="big" id="kcalLeft">–</div>
-          <div class="muted" id="kcalLeftLabel">kcal left</div>
+          <div id="kcalLeftLabel">kcal left</div>
         </div>
-        <div class="right muted small" id="kcalEaten">0 eaten / 0 target</div>
+        <div class="right muted" id="kcalEaten"></div>
       </div>
       <div class="bar"><div id="kcalBar"></div></div>
       <div class="macros">
@@ -39,39 +49,47 @@
       </div>
     </div>
     <div class="addrow">
-      <button class="primary" data-act="scan">▦ Scan</button>
-      <button data-act="search">⌕ Food list</button>
-      <button data-act="describe">✎ Describe</button>
-      <button data-act="quick">＋ Quick</button>
+      <button class="primary" data-act="scan"><span class="g">▦</span>Scan</button>
+      <button data-act="search"><span class="g">⌕</span>Foods</button>
+      <button data-act="describe"><span class="g">✎</span>Describe</button>
+      <button data-act="quick"><span class="g">＋</span>Quick</button>
     </div>
+    <div class="quick" id="quickStrip"></div>
     <div id="meals"></div>
-    <p id="setupHint" class="card hint hidden">Set up your profile in <b>Me</b> to get your calorie target.</p>
+    <div class="card water" id="waterCard"></div>
+    <div id="setupHint" class="card hint hidden"><b>No targets yet.</b> <button class="link" data-goto="me">Set up your profile →</button></div>
   </section>
 
-  <!-- WEIGHT -->
+  <!-- PROGRESS -->
   <section id="tab-weight" class="tab">
-    <header><h1>Weight</h1></header>
+    <h1>Progress</h1>
     <div class="card">
       <div class="row">
         <input id="wInput" type="number" inputmode="decimal" step="0.1" placeholder="kg">
-        <input id="wDate" type="date">
+        <input id="wDate" type="date" style="flex:1.6">
         <button class="primary" id="wSave">Save</button>
       </div>
-      <p class="muted small">Weigh in the morning, after the toilet, before eating. 2–3 times a week is ideal; the app averages out the daily water swings.</p>
     </div>
-    <div class="card"><div id="wChart"></div><div id="wStats" class="small"></div></div>
+    <div class="card" id="wHead"></div>
+    <div class="card"><div class="ph"><h3>Weight</h3><small id="wLegend"></small></div><div id="wChart"></div><div id="wStats" class="small"></div></div>
+    <div class="card" id="weekCard"></div>
+    <div class="card" id="medalCard"></div>
     <div class="card" id="adaptCard"></div>
-    <div class="card"><h3>History</h3><ul id="wList" class="list"></ul></div>
+    <div class="card"><details><summary>Weigh-in history</summary><ul id="wList" class="list"></ul></details></div>
   </section>
 
   <!-- ME / SETTINGS -->
   <section id="tab-me" class="tab">
-    <header><h1>Me</h1></header>
+    <h1>Me</h1>
+    <div class="card" id="targetsCard"></div>
     <form id="profileForm" class="card form">
       <h3>Profile</h3>
-      <label>Sex <select name="sex"><option value="m">Male</option><option value="f">Female</option></select></label>
-      <label>Birth year <input name="birthYear" type="number" inputmode="numeric" placeholder="e.g. 1997"></label>
-      <label>Height (cm) <input name="height" type="number" inputmode="decimal" placeholder="e.g. 180"></label>
+      <div class="grid2">
+        <label>Sex <select name="sex"><option value="m">Male</option><option value="f">Female</option></select></label>
+        <label>Birth year <input name="birthYear" type="number" inputmode="numeric" placeholder="1997"></label>
+        <label>Height cm <input name="height" type="number" inputmode="decimal" placeholder="180"></label>
+        <label>Goal weight kg <input name="goalKg" type="number" inputmode="decimal" step="0.1" placeholder="optional"></label>
+      </div>
       <label>Activity
         <select name="activity">
           <option value="1.2">Mostly sitting, no training</option>
@@ -85,47 +103,45 @@
         <select name="goal">
           <option value="auto">Not sure – suggest one</option>
           <option value="lose">Lose fat</option>
-          <option value="recomp">Recomp (lose fat + build muscle slowly)</option>
+          <option value="recomp">Recomp (lose fat + build muscle)</option>
           <option value="gain">Build muscle</option>
         </select>
       </label>
-      <label>Daily calories override (optional) <input name="kcalOverride" type="number" inputmode="numeric" placeholder="leave empty = automatic"></label>
-      <button class="primary" type="submit">Save profile</button>
+      <div class="grid2">
+        <label>Calories override <input name="kcalOverride" type="number" inputmode="numeric" placeholder="auto"></label>
+        <label>Water goal ml <input name="waterGoal" type="number" inputmode="numeric" placeholder="2500"></label>
+      </div>
+      <button class="primary wide" type="submit">Save profile</button>
     </form>
-    <div class="card" id="targetsCard"></div>
     <form id="aiForm" class="card form">
-      <h3>AI (label photos + "describe a meal")</h3>
+      <h3>AI · label photos, plate photos, describe</h3>
       <label>Anthropic API key <input name="apiKey" type="password" autocomplete="off" placeholder="sk-ant-…"></label>
       <label>Model
         <select name="model">
-          <option value="claude-opus-5-5">Claude Opus 5.5 (best reading, ~1–3 cents per photo)</option>
-          <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (cheaper)</option>
-          <option value="claude-haiku-5-5">Claude Haiku 5.5 (cheapest)</option>
+          <option value="claude-opus-5-5">Opus 5.5 · best</option>
+          <option value="claude-sonnet-5-5">Sonnet 5.5 · cheaper</option>
+          <option value="claude-haiku-5-5">Haiku 5.5 · cheapest</option>
         </select>
       </label>
-      <p class="muted small">The key is stored only on this phone and is sent only to Anthropic. Without a key, everything else still works; you just type label values yourself.</p>
-      <button class="primary" type="submit">Save AI settings</button>
-      <button type="button" id="aiTest">Test key</button>
+      <div class="btnrow"><button class="primary" type="submit">Save</button><button type="button" id="aiTest">Test key</button></div>
+      <p class="muted small" style="margin:8px 0 0">Stored only on this phone.</p>
     </form>
     <div class="card form">
       <h3>Backup</h3>
-      <p class="muted small">Your data lives only on this phone. Export a backup now and then (it goes to Files / iCloud Drive).</p>
-      <button id="exportBtn">Export backup</button>
-      <label class="filebtn">Import backup<input type="file" id="importFile" accept="application/json,.json" hidden></label>
-      <p class="muted small" id="storageInfo"></p>
+      <div class="btnrow"><button id="exportBtn">Export</button><label class="filebtn" style="flex:1">Import<input type="file" id="importFile" accept="application/json,.json" hidden></label></div>
+      <p class="muted small" id="storageInfo" style="margin:8px 0 0"></p>
     </div>
   </section>
 </main>
 
 <nav class="tabbar">
   <button data-tab="today" class="active">Today</button>
-  <button data-tab="weight">Weight</button>
+  <button data-tab="weight">Progress</button>
   <button data-tab="me">Me</button>
 </nav>
 
-<!-- Sheets -->
 <dialog id="sheet"><div id="sheetBody"></div></dialog>
-<div id="toast" class="toast hidden"></div>
+<div id="toast" class="toast hidden" popover="manual"></div>
 
 <script src="vendor.js"></script>
 <script src="foods.js"></script>
