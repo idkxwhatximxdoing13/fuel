@@ -21,47 +21,76 @@
 <main id="app">
   <!-- TODAY -->
   <section id="tab-today" class="tab active">
-    <div class="top">
-      <div><h1 id="dayTitle">Today</h1><div class="sub" id="daySub"></div></div>
-      <div class="streak" id="streak"><span class="led"></span><span id="streakTxt"></span></div>
+    <header class="top">
+      <div class="daypick">
+        <h1 id="dayTitle">Today</h1>
+        <div class="sub"><span id="daySub"></span><svg class="i" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
+        <input type="date" id="dayPick" aria-label="Go to another day">
+      </div>
+      <button class="pill go hidden" id="backToday">Today<svg class="i" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+      <button class="pill streak" id="streak" data-goto="progress" aria-label="Day streak"><svg class="i fill" viewBox="0 0 24 24"><path d="M12.4 2.5c.6 3.6 5.1 5.3 5.1 10.4a5.5 5.5 0 0 1-11 0c0-2.2 1-3.6 2.2-4.9.2 1.7.9 2.7 1.9 2.9-.3-3 .3-5.9 1.8-8.4z"/></svg><span id="streakTxt">0</span></button>
+    </header>
+    <div class="days" id="dayStrip"></div>
+
+    <div id="installHint" class="card hint hidden">
+      <svg class="i" viewBox="0 0 24 24"><path d="M12 15V3.5M8 7l4-4 4 4M6 11H5a1 1 0 0 0-1 1v7.5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V12a1 1 0 0 0-1-1h-1"/></svg>
+      <div class="tx"><b>Add Fuel to your Home Screen</b><span>Tap Share, then “Add to Home Screen”. It opens full screen, like any app.</span></div>
+      <button class="ib quiet" id="hideInstall" aria-label="Dismiss"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
-    <div class="days" id="weekStrip"></div>
+
     <div class="card hero">
-      <div class="ring" id="ring"></div>
-      <div class="pair" id="pair"></div>
+      <div class="ring" id="ring">
+        <div class="mid"><div class="num" id="ringNum">0</div><div class="lbl" id="ringLbl">kcal left</div></div>
+      </div>
+      <div class="pair" id="pair">
+        <div><span class="lbl">Eaten</span><b id="eatenNum">0</b></div>
+        <div><span class="lbl">Target</span><b id="targetNum">0</b></div>
+      </div>
       <div class="macros">
-        <div class="macro"><div class="top2"><span class="lbl">Protein</span></div><b id="mP">0</b><div class="bar"><div id="bP" class="p"></div></div></div>
-        <div class="macro"><div class="top2"><span class="lbl">Carbs</span></div><b id="mC">0</b><div class="bar"><div id="bC" class="c"></div></div></div>
-        <div class="macro"><div class="top2"><span class="lbl">Fat</span></div><b id="mF">0</b><div class="bar"><div id="bF" class="f"></div></div></div>
+        <div class="macro"><span class="lbl">Protein</span><b id="mP">0</b><div class="bar"><div id="bP" class="p"></div></div></div>
+        <div class="macro"><span class="lbl">Carbs</span><b id="mC">0</b><div class="bar"><div id="bC" class="c"></div></div></div>
+        <div class="macro"><span class="lbl">Fat</span><b id="mF">0</b><div class="bar"><div id="bF" class="f"></div></div></div>
       </div>
     </div>
-    <div id="setupHint" class="card hidden" style="display:flex;align-items:center;justify-content:space-between;gap:10px"><span class="muted">Set up your profile to get targets.</span><button class="primary" data-goto="me">Set up</button></div>
+
+    <div id="setupHint" class="card hint hidden">
+      <div class="tx"><b>Get your daily targets</b><span>Add your height, age and one weigh-in.</span></div>
+      <button class="primary" data-goto="me">Set up</button>
+    </div>
+
     <div id="meals"></div>
-    <div class="card water" id="waterCard"></div>
+
+    <div class="card water" id="waterCard">
+      <div class="drop"><svg width="18" height="22" viewBox="0 0 18 22"><path d="M9 1.5C6 6 2 9.6 2 13.6A7 7 0 0 0 16 13.6C16 9.6 12 6 9 1.5Z" fill="#6cc4ff"/></svg></div>
+      <div class="info">
+        <span class="lbl">Water</span>
+        <b><span id="waterNum">0</span><small id="waterGoal"></small></b>
+        <div class="bar"><div id="waterBar"></div></div>
+      </div>
+      <button class="ib" data-water="-250" aria-label="Remove a glass"><svg class="i" viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+      <button class="ib add" data-water="250" aria-label="Add a glass"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+    </div>
   </section>
 
   <!-- PROGRESS -->
-  <section id="tab-weight" class="tab">
-    <div class="top"><div><h1>Progress</h1><div class="sub">weight · week · medals</div></div></div>
+  <section id="tab-progress" class="tab">
+    <header class="top"><h1>Progress</h1></header>
     <div class="card" id="wHead"></div>
     <div class="card">
-      <h3>Log weight</h3>
-      <div class="wrow">
-        <input id="wInput" type="number" inputmode="decimal" step="0.1" placeholder="kg">
-        <input id="wDate" type="date">
+      <div class="sec"><h3>Trend</h3>
+        <div class="seg mini" id="rangeSeg"><button data-range="1m">1M</button><button data-range="3m" class="on">3M</button><button data-range="all">All</button></div>
       </div>
-      <button class="primary wide" id="wSave" style="margin-top:10px">Save weigh-in</button>
+      <div id="wChart"></div>
     </div>
-    <div class="card"><div class="sec"><h3>Trend</h3><small id="wLegend"></small></div><div id="wChart"></div></div>
     <div class="card" id="weekCard"></div>
     <div class="card" id="medalCard"></div>
     <div class="card" id="adaptCard"></div>
-    <div class="card"><details><summary>Weigh-in history</summary><ul id="wList" class="list" style="margin-top:8px"></ul></details></div>
+    <div class="card"><details><summary>Weigh-in history</summary><ul id="wList" class="list"></ul></details></div>
   </section>
 
   <!-- ME -->
   <section id="tab-me" class="tab">
-    <div class="top"><div><h1>Me</h1><div class="sub">targets · profile · settings</div></div></div>
+    <header class="top"><h1>Me</h1></header>
     <div class="card" id="targetsCard"></div>
     <form id="profileForm" class="card form">
       <h3>Profile</h3>
@@ -69,7 +98,7 @@
         <label>Sex <select name="sex"><option value="m">Male</option><option value="f">Female</option></select></label>
         <label>Birth year <input name="birthYear" type="number" inputmode="numeric" placeholder="1997"></label>
         <label>Height cm <input name="height" type="number" inputmode="decimal" placeholder="180"></label>
-        <label>Goal weight <input name="goalKg" type="number" inputmode="decimal" step="0.1" placeholder="kg"></label>
+        <label>Goal weight kg <input name="goalKg" type="number" inputmode="decimal" step="0.1" placeholder="optional"></label>
       </div>
       <label>Activity
         <select name="activity">
@@ -95,8 +124,8 @@
       <button class="primary wide" type="submit">Save profile</button>
     </form>
     <form id="aiForm" class="card form">
-      <h3>AI</h3>
-      <label>Anthropic API key <input name="apiKey" type="password" autocomplete="off" placeholder="sk-ant-…"></label>
+      <div class="sec"><h3>AI</h3><small>label photos · describe a meal</small></div>
+      <label>Anthropic API key <input name="apiKey" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="sk-ant-…"></label>
       <label>Model
         <select name="model">
           <option value="claude-opus-5-5">Opus 5.5 · best</option>
@@ -107,22 +136,30 @@
       <div class="btnrow"><button class="primary" type="submit">Save</button><button type="button" id="aiTest">Test key</button></div>
     </form>
     <div class="card">
-      <h3>Backup</h3>
-      <div class="btnrow" style="margin-top:0"><button id="exportBtn">Export</button><label class="filebtn">Import<input type="file" id="importFile" accept="application/json,.json" hidden></label></div>
-      <p class="muted small" id="storageInfo" style="margin:10px 0 0"></p>
+      <div class="sec"><h3>Backup</h3><small id="backupInfo"></small></div>
+      <div class="btnrow"><button id="exportBtn">Export</button><label class="filebtn">Import<input type="file" id="importFile" accept="application/json,.json" hidden></label></div>
+    </div>
+    <div class="card">
+      <div class="sec"><h3>App</h3><small id="verTxt"></small></div>
+      <p class="muted small" id="storageInfo"></p>
+      <button class="wide" id="updBtn">Check for update</button>
     </div>
   </section>
 </main>
 
-<button class="primary fab show" id="fab" aria-label="Add food">+</button>
-
-<nav class="tabbar">
-  <button data-tab="today" class="active"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 8.5 8.5"/><circle cx="12" cy="12" r="2"/></svg>Today</button>
-  <button data-tab="weight"><svg viewBox="0 0 24 24"><path d="M3.5 17l5-5.5 4 3.5 7.5-8"/><path d="M15 7h5v5"/></svg>Progress</button>
-  <button data-tab="me"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20c1.4-3.6 4.2-5.2 7.5-5.2s6.1 1.6 7.5 5.2"/></svg>Me</button>
+<nav class="dock" id="dock">
+  <div class="tabs">
+    <button data-tab="today" class="active"><svg class="i" viewBox="0 0 24 24"><path d="M5.6 18.4a9 9 0 1 1 12.8 0"/><path d="M12 12l3.5-3.5"/><circle cx="12" cy="12" r="1.3"/></svg><span>Today</span></button>
+    <button data-tab="progress"><svg class="i" viewBox="0 0 24 24"><path d="M3.5 17l5-5.5 4 3.5 7.5-8"/><path d="M15 7h5v5"/></svg><span>Progress</span></button>
+    <button data-tab="me"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20c1.4-3.6 4.2-5.2 7.5-5.2s6.1 1.6 7.5 5.2"/></svg><span>Me</span><i class="dot hidden" id="meDot"></i></button>
+  </div>
+  <button class="plus" id="fab" aria-label="Add food"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
 </nav>
 
-<dialog id="sheet"><div id="sheetBody"></div></dialog>
+<dialog id="sheet">
+  <div class="grab" id="grab"><i></i></div>
+  <div id="sheetBody"></div>
+</dialog>
 <div id="toast" class="toast hidden" popover="manual"></div>
 
 <script src="vendor.js"></script>

@@ -1,22 +1,47 @@
-/* Fuel offline cache. App files: network first (so updates arrive), cache as fallback (so it opens offline).
-   Never touches other sites (Open Food Facts, Anthropic). */
-const CACHE = "fuel-v4";
+/* Fuel service worker: makes the app open instantly and work with no signal.
+
+   How it works: each version of the app gets its own complete copy of every file, downloaded when that version is
+   installed. Pages are always served from that one copy, so the app never runs half old and half new files.
+   A new release = a new VERSION below = a fresh copy fetched in the background, used from the next start.
+
+   VERSION is stamped by _build/stamp.sh, which must be run before every release, together with
+   APP_VERSION in app.js. If it does not change, phones that already have the app will NOT get the update. */
+const VERSION = "2026.11.17-033356";
+const CACHE = "fuel-" + VERSION;
 const SHELL = ["./", "index.html", "style.css", "app.js", "foods.js", "vendor.js", "manifest.webmanifest", "icon-180.png", "icon-512.png",
-  "fonts/vt323-latin-400-normal.woff2", "fonts/jetbrains-mono-latin-400-normal.woff2", "fonts/jetbrains-mono-latin-700-normal.woff2"];
+  "fonts/vt323-latin-400-normal.woff2", "fonts/vt323-latin-ext-400-normal.woff2",
+  "fonts/jetbrains-mono-latin-400-normal.woff2", "fonts/jetbrains-mono-latin-ext-400-normal.woff2",
+  "fonts/jetbrains-mono-latin-700-normal.woff2", "fonts/jetbrains-mono-latin-ext-700-normal.woff2"];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // "?v=" + cache:"reload" make sure these come fresh from the server, never from a stale copy in between
+  e.waitUntil(caches.open(CACHE)
+    .then((c) => c.addAll(SHELL.map((u) => new Request(u + "?v=" + VERSION, { cache: "reload" }))))
+    .then(() => self.skipWaiting()));
 });
+
 self.addEventListener("activate", (e) => {
-  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys()
+    .then((keys) => Promise.all(keys.filter((k) => k.startsWith("fuel-") && k !== CACHE).map((k) => caches.delete(k))))
+    .then(() => self.clients.claim()));
 });
+
+// the page asks which version is in charge, to know whether it should restart into new files
+self.addEventListener("message", (e) => { if (e.data === "version" && e.ports[0]) e.ports[0].postMessage(VERSION); });
+
 self.addEventListener("fetch", (e) => {
-  const url = new URL(e.request.url);
-  if (e.request.method !== "GET" || url.origin !== self.location.origin) return; // other sites: browser handles it
-  e.respondWith(
-    fetch(e.request).then((res) => {
-      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
+  const req = e.request, url = new URL(req.url);
+  if (req.method !== "GET" || url.origin !== self.location.origin) return; // other sites (food database, AI) go straight to the network
+  e.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    const hit = (await cache.match(req, { ignoreSearch: true })) || (req.mode === "navigate" ? await cache.match("index.html", { ignoreSearch: true }) : null);
+    if (hit) return hit;
+    try {
+      const res = await fetch(req);
+      if (res.ok) cache.put(req, res.clone());
       return res;
-    }).catch(() => caches.match(e.request, { ignoreSearch: true }).then((r) => r || caches.match("index.html")))
-  );
+    } catch {
+      return (req.mode === "navigate" && (await cache.match("index.html", { ignoreSearch: true }))) || Response.error();
+    }
+  })());
 });
