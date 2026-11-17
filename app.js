@@ -1,7 +1,7 @@
 /* Fuel – personal calorie / weight app. All data stays on this device (IndexedDB). */
 "use strict";
 // Stamped by _build/stamp.sh before every release (same value as VERSION in sw.js) – do not edit by hand.
-const APP_VERSION = "2026.11.17-033356";
+const APP_VERSION = "2026.11.17-033601";
 
 // ---------- tiny helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
