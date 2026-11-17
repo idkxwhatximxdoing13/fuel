@@ -240,7 +240,7 @@ dialog#sheet.closing::backdrop,dialog#sheet.dragout::backdrop{animation:fadeOut 
 .searchbox input{padding-left:44px;padding-right:44px;border-radius:14px}
 .searchbox input::-webkit-search-cancel-button,.searchbox input::-webkit-search-decoration{-webkit-appearance:none;display:none}
 .searchbox .clr{position:absolute;right:6px;background:none;color:var(--muted)}
-.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
 .tiles button{flex-direction:column;gap:8px;min-height:88px;padding:12px 4px;background:var(--s2);box-shadow:inset 0 0 0 1px var(--edge);font:600 13px var(--sans);border-radius:18px}
 .tiles button svg{width:26px;height:26px;stroke-width:1.6;color:var(--hi)}
 .tiles button.primary{background:linear-gradient(180deg,#ffbb5c,var(--accent));color:var(--accent-text);box-shadow:0 10px 26px -12px var(--glow),inset 0 1px 0 rgba(255,255,255,.35)}
@@ -279,6 +279,18 @@ dialog#sheet.closing::backdrop,dialog#sheet.dragout::backdrop{animation:fadeOut 
 .chk svg{width:15px;height:15px;stroke-width:3}
 .note{background:var(--s2);border-radius:14px;padding:12px 14px;font:13.5px/1.45 var(--sans);color:var(--muted);margin:10px 0}
 .note.warn{background:rgba(255,107,79,.1);color:#ffb7a6}
+/* delivery order: the pictures being read, then the dishes like a basket (− / + = portions eaten) */
+textarea.short{min-height:76px;margin-top:10px}
+#ordGo{margin-top:10px}
+.shots{display:flex;justify-content:center;gap:8px;margin:4px 0 14px}
+.shots:empty{display:none}
+.shots img{flex:0 1 58px;min-width:0;height:104px;object-fit:cover;object-position:top;border-radius:12px;background:var(--well);box-shadow:0 0 0 1px var(--edge2)}
+.basket li:first-child{border-top:0}
+.basket li.off .name{opacity:.38}
+.qty{flex:0 0 auto;display:flex;align-items:center}
+.qty button{width:38px;height:38px;min-height:38px;padding:0;border-radius:50%}
+.qty button svg{width:17px;height:17px;stroke-width:2.2}
+.qty b{min-width:42px;text-align:center;font:400 27px/1 var(--vt);color:var(--hi);font-variant-numeric:tabular-nums}
 
 /* ---------- toast ---------- */
 .toast{position:fixed;inset:auto auto calc(var(--dockb) + 84px) 50%;margin:0;overflow:visible;transform:translateX(-50%);z-index:100;
@@ -346,4 +358,4 @@ svg text{fill:var(--faint);font:11px var(--mono)}
 @keyframes scan{from{top:18%}to{top:82%}}
 @keyframes flash{0%{background:rgba(245,168,60,.22)}100%{background:rgba(245,168,60,0)}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
-@media (max-width:360px){.ring .num{font-size:74px}.tiles button{font-size:12px}.stepper input{font-size:42px}}
+@media (max-width:360px){.ring .num{font-size:74px}.tiles{gap:6px}.tiles button{font-size:11.5px}.stepper input{font-size:42px}}

@@ -1,7 +1,7 @@
 /* Fuel – personal calorie / weight app. All data stays on this device (IndexedDB). */
 "use strict";
 // Stamped by _build/stamp.sh before every release (same value as VERSION in sw.js) – do not edit by hand.
-const APP_VERSION = "2026.11.17-035811";
+const APP_VERSION = "2026.11.17-155322";
 
 // ---------- tiny helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -46,6 +46,8 @@ const I = {
   camera: svg('<path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1.4-2h6.2l1.4 2h2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="13" r="3.4"/>'),
   meal: svg('<path d="M7 4h10a1 1 0 0 1 1 1v15l-6-3.5L6 20V5a1 1 0 0 1 1-1z"/>'),
   check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
+  bag: svg('<path d="M6.5 8.5h11l1 10.9a1 1 0 0 1-1 1.1h-11a1 1 0 0 1-1-1.1z"/><path d="M9 11.5V7a3 3 0 0 1 6 0v4.5"/>'),
+  image: svg('<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="8.6" cy="9.8" r="1.5"/><path d="M4.5 17l4.6-4.6 3.2 3.2 2.6-2.6 4.6 4.6"/>'),
 };
 
 // toast with an optional action button (UNDO etc). Uses the top layer so it shows above open sheets.
@@ -248,6 +250,32 @@ const MEAL_SCHEMA = {
 const MEAL_RULES = `Split it into separate ingredients/items. For each item give the eaten amount in grams and total kcal, protein, carbs, fat (grams) FOR THAT AMOUNT. Count cooking fat (oil, butter) as its own item when it's mentioned or clearly implied (e.g. "fried"). Use typical European portion sizes when no amount is given, and say what you assumed in note (one short sentence, English).`;
 const MEAL_PROMPT = (txt) => `Estimate the nutrition of this meal someone ate. ${MEAL_RULES} Meal: """${txt}"""`;
 const PLATE_PROMPT = (txt) => `The photo shows a meal someone is about to eat. Identify the foods and estimate the portion sizes from the plate, cutlery and packaging you can see, then estimate the nutrition. ${MEAL_RULES}${txt ? ` Extra info from the person: """${txt}"""` : ""}`;
+// A delivery or restaurant order: one line per dish (not per ingredient), with how many were ordered, so the amount eaten can be changed in portions.
+const ORDER_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["restaurant", "items", "note"],
+  properties: {
+    restaurant: nn("string"),
+    items: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "count", "basis", "grams", "kcal", "protein", "carbs", "fat", "source"],
+      properties: { name: { type: "string" }, count: { type: "number" }, basis: { type: "string", enum: ["g", "ml"] }, grams: { type: "number" }, kcal: { type: "number" }, protein: { type: "number" }, carbs: { type: "number" }, fat: { type: "number" }, source: { type: "string", enum: ["shown", "estimate"] } } } },
+    note: { type: "string" },
+  },
+};
+const ORDER_RULES = `List what was ordered: one item per dish or drink, as written on the order. Do not split a dish into ingredients. A combo or menu ("meniu") becomes its parts (burger, fries, drink), each its own item. Extras chosen for a dish (extra cheese, a sauce inside it) count into that dish. Leave out everything that is not food or drink: delivery and service fees, tips, bags, cutlery, discounts, bottle deposits ("garanție").
+For each item:
+- name: short, as on the menu, in the menu's language.
+- count: how many were ordered ("2x" means 2; 1 if not shown). If the person says they ate only part of something, use that share instead (half a pizza is 0.5).
+- grams, kcal, protein, carbs, fat: for ONE of it, never for the whole line. Example: "2x Cheeseburger" gives count 2 and the weight and nutrition of one cheeseburger.
+- basis: "ml" for drinks (grams is then the volume in ml), otherwise "g".
+- If a weight, volume or nutrition values are shown for the item, use them; convert values given per 100 g/ml with the portion weight. Romanian text uses commas as decimals; if energy is in kJ only, divide by 4.184.
+- Otherwise estimate: for a well-known chain use that chain's usual values for the item; for any other place assume a typical restaurant portion (larger and richer than home cooking).
+- grams is never 0: give your best estimate of the weight of one portion.
+- source: "shown" only when the kcal of this item is printed in what you were given, otherwise "estimate".
+restaurant: the short name of the place (e.g. "KFC"), no branch or address; null if unknown.
+note: one short sentence in English on what you assumed, or "" if nothing.
+If there is no food order here, return no items and say so in note.`;
+const ORDER_PROMPT = (txt, shots) => (shots
+  ? `${shots > 1 ? "These screenshots show" : "This screenshot shows"} a food order from a delivery app or a restaurant (basket, order summary, receipt or a dish page), often in Romanian.${shots > 1 ? " They may overlap: count each ordered line once." : ""}\n${ORDER_RULES}${txt ? `\nExtra info from the person: """${txt}"""` : ""}`
+  : `Someone ordered food from a delivery app or a restaurant and describes it like this: """${txt}"""\n${ORDER_RULES}`);
 
 async function fileToImageBlock(file) {
   const bmp = await createImageBitmap(file).catch(() => null);
@@ -648,6 +676,7 @@ function openAdd(meal) {
     <div class="tiles" id="tiles">
       <button type="button" class="primary" data-act="scan">${I.scan}<span>Scan</span></button>
       <button type="button" data-act="describe">${I.spark}<span>Describe</span></button>
+      <button type="button" data-act="order">${I.bag}<span>Delivery</span></button>
       <button type="button" data-act="quick">${I.bolt}<span>Quick add</span></button>
     </div>
     <ul class="list" id="addList"></ul>`, { tall: true });
@@ -690,7 +719,7 @@ function openAdd(meal) {
   list.ontouchmove = () => { if (document.activeElement === q$) q$.blur(); }; // scrolling the results puts the keyboard away
   body.onclick = async (e) => {
     const t = e.target, act = t.closest("[data-act]")?.dataset.act;
-    if (act) return ({ scan: openScanner, describe: openDescribe, quick: openQuick })[act]?.();
+    if (act) return ({ scan: openScanner, describe: openDescribe, order: openOrder, quick: openQuick })[act]?.();
     if (t.closest("#qClr")) { q$.value = ""; browse = false; draw(); q$.focus(); return; }
     if (t.closest("[data-browse]")) { browse = true; draw(); sheetBody.scrollTop = 0; return; }
     if (t.closest("[data-unbrowse]")) { browse = false; draw(); sheetBody.scrollTop = 0; return; }
@@ -971,6 +1000,90 @@ function openDescribe() {
     const img = await fileToImageBlock(file);
     run([img, { type: "text", text: PLATE_PROMPT($("#mealTxt", body).value.trim()) }], "Looking at your plate");
     e.target.value = "";
+  };
+}
+
+// ---------- Delivery order: screenshots of the order (or a few typed words) → the dishes, shown like a basket (AI) ----------
+function openOrder() {
+  const has = !!S.ai.apiKey, TITLE = "Delivery order", off = has ? "" : ' style="opacity:.35;pointer-events:none"';
+  let meal = defaultMeal(), content = null, thumbs = "";
+  const body = openSheet(`${head(TITLE)}
+    ${has ? "" : `<div class="note warn">This needs your Anthropic API key. <button type="button" class="link" data-goto="me">Add it in Me</button></div>`}
+    <label class="filebtn primary wide"${off}>${I.image}Choose screenshots<input type="file" accept="image/*" multiple id="shots" hidden></label>
+    <textarea id="ordTxt" class="short" placeholder="Or type it: 2 shaorma mare, cartofi, Pepsi – Dristor"${has ? "" : " disabled"}${off}></textarea>
+    <button type="button" class="tint wide hidden" id="ordGo">Estimate</button>`);
+  const txt$ = $("#ordTxt", body), go = $("#ordGo", body);
+
+  const loading = () => { openSheet(`${head(TITLE)}<div class="shots" id="shotRow">${thumbs}</div><p class="lbl status"><span class="spinner"></span><span class="blink">Reading your order</span></p>`); return sheetGen; };
+  // the pictures stay in memory, so "Try again" needs no second trip to the photo library
+  const ask = async (gen = loading()) => {
+    try { const r = await askClaude(content, ORDER_SCHEMA); if (gen === sheetGen) show(r); }
+    catch (err) { if (gen === sheetGen) fail(err.message, true); }
+  };
+  const fail = (msg, retry) => {
+    const b = openSheet(`${head(TITLE)}<div class="shots">${thumbs}</div><div class="note warn">${esc(msg)}</div>
+      <div class="btnrow"><button type="button" class="${retry ? "quietbtn" : "primary"}" id="ordBack">Start over</button>${retry ? `<button type="button" class="primary" id="ordRetry">Try again</button>` : ""}</div>`);
+    $("#ordBack", b).onclick = () => openOrder();
+    if (retry) $("#ordRetry", b).onclick = () => ask();
+  };
+  const show = (r) => {
+    const place = String(r.restaurant || "").trim(), pos = (v) => Math.max(0, +v || 0);
+    const items = (Array.isArray(r.items) ? r.items : []).filter((i) => i && String(i.name || "").trim()).map((i) => {
+      const kcal = pos(i.kcal);
+      return { name: String(i.name).trim(), U: i.basis === "ml" ? "ml" : "g", kcal, p: pos(i.protein), c: pos(i.carbs), f: pos(i.fat), est: i.source !== "shown",
+        g: i.grams > 0 ? i.grams : kcal ? Math.max(30, Math.round(kcal / 2)) : 250, // never 0: an entry without a weight could not be changed in portions later
+        n: Math.min(20, Math.max(0.5, Math.round(pos(i.count || 1) * 2) / 2)) }; // n = portions eaten, starts at what was ordered
+    });
+    if (!items.length) return fail(String(r.note || "").trim() || "No food order found in that.", false);
+    const b = openSheet(`${head(place || TITLE)}
+      <ul class="list basket" id="ordList">${items.map((i, k) => `<li data-k="${k}"><div class="name">${esc(i.name)}<small></small></div><div class="qty"><button type="button" data-q="-1" aria-label="Less">${I.minus}</button><b></b><button type="button" data-q="1" aria-label="More">${I.plus}</button></div></li>`).join("")}</ul>
+      ${String(r.note || "").trim() ? `<div class="note">${esc(r.note)}</div>` : ""}
+      <div class="preview" id="ordPv"></div>
+      ${mealSeg(meal)}
+      <button type="button" class="primary wide" id="ordAdd"></button>`);
+    const list = $("#ordList", b), add = $("#ordAdd", b);
+    const paint = () => {
+      $$("li", list).forEach((li, k) => {
+        const i = items[k], m = i.n || 1; // a dish set to 0 keeps showing what one portion is
+        li.classList.toggle("off", !i.n); $("b", li).textContent = i.n;
+        $("small", li).textContent = `${i.est ? "≈ " : ""}${r0(i.kcal * m)} kcal · ${r0(i.g * m)} ${i.U}`;
+      });
+      const on = items.filter((i) => i.n > 0);
+      $("#ordPv", b).innerHTML = four(on.reduce((s, i) => ({ kcal: s.kcal + i.kcal * i.n, p: s.p + i.p * i.n, c: s.c + i.c * i.n, f: s.f + i.f * i.n }), { kcal: 0, p: 0, c: 0, f: 0 }), r0);
+      add.textContent = on.length ? `Add ${nItems(on.length)}` : "Nothing to add"; add.disabled = !on.length;
+    };
+    list.onclick = (e) => {
+      const q = e.target.closest("[data-q]"); if (!q) return;
+      const i = items[+q.closest("li").dataset.k]; i.n = Math.min(20, Math.max(0, i.n + q.dataset.q * 0.5)); paint();
+    };
+    wireMealSeg(b, (m) => (meal = m));
+    add.onclick = guard(add, async () => {
+      // logged in portions, the same shape as a food eaten "by the piece": tap it later to change how much, add it again from Recent
+      const out = items.filter((i) => i.n > 0).map((i) => {
+        const g = i.g * i.n, where = place && !fold(i.name).includes(fold(place)) ? ` · ${place}` : "";
+        return { name: i.name + where, grams: g, unit: "serving", unitG: i.g, qty: i.n, unitLabel: "portion", basis: i.U, amountText: `${i.n} ${plural("portion", i.n)} · ${r0(g)} ${i.U}`, ai: true,
+          kcal: i.kcal * i.n, p: i.p * i.n, c: i.c * i.n, f: i.f * i.n, meal };
+      });
+      closeSheet(); await addEntries(out);
+    });
+    paint();
+  };
+
+  txt$.oninput = () => go.classList.toggle("hidden", !txt$.value.trim());
+  go.onclick = () => { const t = txt$.value.trim(); if (!t) return; txt$.blur(); thumbs = ""; content = [{ type: "text", text: ORDER_PROMPT(t, 0) }]; ask(); };
+  $("#shots", body).onchange = async (e) => {
+    const picked = [...e.target.files], files = picked.slice(0, 6), extra = txt$.value.trim(); e.target.value = "";
+    if (!files.length) return;
+    if (picked.length > files.length) toast("Using the first 6 pictures");
+    thumbs = ""; const gen = loading();
+    try {
+      const imgs = []; for (const f of files) imgs.push(await fileToImageBlock(f));
+      if (gen !== sheetGen) return;
+      thumbs = imgs.map((x) => `<img src="data:image/jpeg;base64,${x.source.data}" alt="">`).join("");
+      $("#shotRow").innerHTML = thumbs;
+      content = [...imgs, { type: "text", text: ORDER_PROMPT(extra, imgs.length) }];
+    } catch { if (gen === sheetGen) fail("Couldn’t open that picture.", false); return; }
+    ask(gen);
   };
 }
 
