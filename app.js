@@ -1,7 +1,7 @@
 /* Fuel – personal calorie / weight app. All data stays on this device (IndexedDB). */
 "use strict";
 // Stamped by _build/stamp.sh before every release (same value as VERSION in sw.js) – do not edit by hand.
-const APP_VERSION = "2026.11.17-033601";
+const APP_VERSION = "2026.11.17-034805";
 
 // ---------- tiny helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -1127,13 +1127,13 @@ function applyBackup(d) {
 }
 
 // ---------- wiring ----------
-function goTab(name) {
+function goTab(name, opts = {}) {
   if (!$("#tab-" + name)) name = "today";
   const same = name === curTab; curTab = name;
   $$(".dock [data-tab]").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   $$(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + name));
   closeSheet(); renderAll();
-  window.scrollTo({ top: 0, behavior: same && !reduceMotion() ? "smooth" : "auto" });
+  if (!opts.stay) window.scrollTo({ top: 0, behavior: same && !reduceMotion() ? "smooth" : "auto" });
 }
 function wire() {
   document.addEventListener("touchstart", () => {}, { passive: true }); // makes pressed-button styles work on iOS
@@ -1226,10 +1226,13 @@ function wire() {
     });
   };
   $("#updBtn").onclick = async () => {
-    if (!swReg) return toast("Updates arrive by themselves when the app is installed");
+    if (!swReg) return toast("Updates arrive by themselves once Fuel is on your Home Screen");
     toast("Checking…", { ms: 10000 });
-    try { await swReg.update(); } catch { return toast("No connection"); }
-    toast(swReg.installing || swReg.waiting ? "Downloading the new version…" : "You have the latest version", { ms: 4000 });
+    UPD.now = true; // asked for by hand: restart as soon as the new version is ready
+    try { await checkForUpdate(true); } catch { UPD.now = false; return toast("No connection"); }
+    if (swReg.installing || swReg.waiting) return toast("Downloading the new version…", { ms: 8000 });
+    UPD.now = false;
+    if (!UPD.want) toast("You have the latest version");
   };
 
   // App reopened on a new day: move on to the new today
@@ -1242,9 +1245,13 @@ function wire() {
 }
 
 // ---------- offline + updates (service worker) ----------
-// The app's files are kept on the phone, so it opens instantly and without signal. When a new version has been
-// downloaded in the background, a freshly opened app simply restarts into it; otherwise it offers "Update".
+// The app's files are kept on the phone, so it opens instantly and without signal.
+// Updates need nothing from the user: every time the app comes back to the front it asks the server for a newer
+// version, downloads it in the background, and restarts into it at the first quiet moment (never with a sheet open,
+// in the middle of typing, or while an Undo is on screen) or when the app is put away. iOS usually resumes a Home
+// Screen app without reloading it, so waiting for "the next start" would leave an old version on screen for days.
 let swReg = null;
+const UPD = { want: null, reloading: false, now: false, lastCheck: 0, lastTouch: 0 };
 function swAsk(msg) {
   return new Promise((res) => {
     const c = navigator.serviceWorker?.controller; if (!c) return res(null);
@@ -1252,36 +1259,60 @@ function swAsk(msg) {
     c.postMessage(msg, [ch.port2]); setTimeout(() => res(null), 1500);
   });
 }
-function softReload() { try { sessionStorage.setItem("fuel-resume", JSON.stringify({ tab: curTab, day: curDay, at: Date.now() })); } catch {} location.reload(); }
+// restart into the new files and come back to the same tab, day and scroll position
+function softReload() {
+  UPD.reloading = true;
+  try {
+    sessionStorage.setItem("fuel-update-tried", UPD.want || "");
+    sessionStorage.setItem("fuel-resume", JSON.stringify({ tab: curTab, day: curDay, y: window.scrollY, updated: !!UPD.want, at: Date.now() }));
+  } catch {}
+  location.reload();
+}
+function busy() {
+  if (sheet.open || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "")) return true;
+  const t = $("#toast"); return !t.classList.contains("hidden") && !!$("button", t); // an Undo is still on offer
+}
+function applyUpdate() {
+  if (!UPD.want || UPD.reloading || busy()) return;
+  if (document.visibilityState === "hidden" || UPD.now || Date.now() - UPD.lastTouch > 4000) softReload();
+}
+// Is a newer version than this page already in charge? Then restart into it (once per version: never loop).
+async function noteVersion() {
+  const v = await swAsk("version");
+  if (!v || v === APP_VERSION) return;
+  let tried = null; try { tried = sessionStorage.getItem("fuel-update-tried"); } catch {}
+  if (tried === v) return;
+  UPD.want = v; applyUpdate();
+}
+function checkForUpdate(force) {
+  if (!swReg || (!force && Date.now() - UPD.lastCheck < 60e3)) return Promise.resolve();
+  UPD.lastCheck = Date.now();
+  noteVersion();
+  return swReg.update();
+}
 function setupSW() {
   if (!("serviceWorker" in navigator)) return;
   const local = ["localhost", "127.0.0.1"].includes(location.hostname);
   if (location.protocol !== "https:" && !(local && new URLSearchParams(location.search).has("sw"))) return; // on the Mac only with ?sw (for testing)
-  const born = Date.now(); let reloading = false, lastCheck = Date.now();
-  navigator.serviceWorker.register("sw.js").then((reg) => { swReg = reg; }).catch(() => {});
-  navigator.serviceWorker.addEventListener("controllerchange", async () => {
-    if (reloading) return;
-    const v = await swAsk("version");
-    if (!v || v === APP_VERSION) return; // this page already runs those files
-    const busy = sheet.open || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
-    if (!busy && Date.now() - born < 8000) { reloading = true; return softReload(); }
-    toast("New version ready", { action: "Update", ms: 15000, onAction: softReload });
-  });
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible" || !swReg || Date.now() - lastCheck < 20 * 60e3) return;
-    lastCheck = Date.now(); swReg.update().catch(() => {});
-  });
+  UPD.lastCheck = Date.now(); // the browser checks by itself while the page loads
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((reg) => { swReg = reg; }).catch(() => {});
+  navigator.serviceWorker.addEventListener("controllerchange", noteVersion);
+  document.addEventListener("pointerdown", () => { UPD.lastTouch = Date.now(); }, { passive: true, capture: true });
+  const back = () => { if (document.visibilityState === "visible") checkForUpdate().catch(() => {}); };
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") applyUpdate(); else back(); });
+  for (const ev of ["pageshow", "focus", "online"]) addEventListener(ev, back);
+  setInterval(applyUpdate, 1500);
 }
 
 (async function init() {
   buildRing();
   try { await DB.open(); await loadAll(); } catch (e) { toast("Storage error: " + e.message, { ms: 6000 }); }
   if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
-  try { // after an update restart: come back to the same tab and day
-    const r = JSON.parse(sessionStorage.getItem("fuel-resume") || "null"); sessionStorage.removeItem("fuel-resume");
-    if (r && Date.now() - r.at < 20000) { if (r.day && r.day <= dkey()) curDay = r.day; if (r.tab) curTab = r.tab; }
-  } catch {}
+  let resumed = null; // set after an update restart: come back to the same tab, day and scroll position
+  try { resumed = JSON.parse(sessionStorage.getItem("fuel-resume") || "null"); sessionStorage.removeItem("fuel-resume"); } catch {}
+  if (resumed && Date.now() - resumed.at < 20000) { if (resumed.day && resumed.day <= dkey()) curDay = resumed.day; if (resumed.tab) curTab = resumed.tab; } else resumed = null;
   wire();
-  if (curTab !== "today") goTab(curTab); else renderAll();
+  if (curTab !== "today") goTab(curTab, { stay: true }); else renderAll();
+  if (resumed) { if (resumed.y) window.scrollTo(0, resumed.y); if (resumed.updated) toast("Updated to the latest version"); }
   setupSW();
 })();
